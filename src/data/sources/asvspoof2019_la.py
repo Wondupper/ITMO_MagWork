@@ -1,8 +1,10 @@
 """Адаптер ASVspoof 2019 LA (PROJECT_ARCHITECTURE.md §6.2, Приложение А).
 
-Метки — из CM-протоколов (`ASVspoof2019_LA_cm_protocols/`), по одному файлу на
-сплит. Сплит берётся из ПАПКИ аудио (`_train/_dev/_eval`), а не из префикса utt_id.
-Формат CM-строки: `speaker utt - attack label` (поле 3 всегда `-`).
+Индексация ведётся ПО CM-ПРОТОКОЛУ (`ASVspoof2019_LA_cm_protocols/`, по одному
+файлу на сплит) — манифест = ровно CM-триалы. В папках flac у dev/eval лежат
+также ASV-enrollment записи (напр. `LA_D_A…`), которых в CM-протоколе нет; они в
+манифест НЕ попадают. Сплит определяется парой (протокол ↔ папка аудио), а не
+префиксом utt_id. Формат CM-строки: `speaker utt - attack label` (поле 3 = `-`).
 """
 from __future__ import annotations
 
@@ -52,13 +54,19 @@ class ASVspoof2019LA(DatasetAdapter):
         rows = []
         for split, subdir in self._SPLIT_SUBDIR.items():
             proto = self._parse_protocol(self._protocol_for(split))
-            for audio in iter_audio(self.raw_dir / subdir / "flac"):
-                utt = audio.stem
-                if utt not in proto:
-                    raise KeyError(
-                        f"[{self.dataset_id}] {audio.name} отсутствует в протоколе '{split}'"
-                    )
-                speaker, attack, label_str = proto[utt]
+            flac_dir = self.raw_dir / subdir / "flac"
+            # Индексируем ТОЛЬКО записи CM-протокола. В папках flac у dev/eval лежат
+            # ещё и ASV-enrollment файлы (напр. LA_D_A…), которых нет в CM-протоколе —
+            # для детекции спуфинга они не нужны и в манифест не идут.
+            present = {p.stem: p for p in iter_audio(flac_dir)}
+            missing = [u for u in proto if u not in present]
+            if missing:
+                raise FileNotFoundError(
+                    f"[{self.dataset_id}] {split}: {len(missing)} записей CM-протокола "
+                    f"без аудио в {flac_dir}, напр. {missing[:3]}"
+                )
+            for utt, (speaker, attack, label_str) in proto.items():
+                audio = present[utt]
                 label = label_to_int(label_str)
                 rows.append({
                     "dataset_id": self.dataset_id,
