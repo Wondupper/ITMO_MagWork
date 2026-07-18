@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -290,12 +291,32 @@ def _validate_feature(arr: np.ndarray, extractor: FeatureExtractor) -> np.ndarra
 
 
 def _load_audio(path: str, target_sr: int) -> tuple[np.ndarray, int]:
-    """Декодировать аудио → моно float32 @ target_sr. Ошибку декодера НЕ прячем —
-    она уходит наверх как есть (LibsndfileError с внятным текстом), в отличие от
-    librosa.load, который маскирует её обёрткой audioread."""
-    y, sr = sf.read(path, dtype="float32", always_2d=False)
-    if y.ndim == 2:                      # многоканальное → моно усреднением
-        y = y.mean(axis=1)
+    """Декодировать аудио → моно float32 @ target_sr.
+
+    Быстрый путь — soundfile (libsndfile). Но libsndfile 1.2.x спотыкается на
+    ЧАСТИ валидных FLAC (ошибки его FLAC-декодера: «lost sync» / «unknown error in
+    flac decoder» — при том что sf.info читает заголовок нормально). На таких
+    файлах откатываемся на librosa/audioread, который при установленном ffmpeg
+    декодирует их надёжно (ffmpeg — независимый FLAC-декодер).
+
+    Если оба пути не смогли — ошибка уходит наверх с обеими причинами (в т.ч.
+    подсказкой поставить ffmpeg), и файл честно попадает в `_failures.csv`.
+    """
+    try:
+        y, sr = sf.read(path, dtype="float32", always_2d=False)
+        if y.ndim == 2:                      # многоканальное → моно усреднением
+            y = y.mean(axis=1)
+    except sf.LibsndfileError as e_sf:
+        try:
+            with warnings.catch_warnings():   # глушим FutureWarning audioread — фолбэк намеренный
+                warnings.simplefilter("ignore")
+                y, sr = librosa.load(path, sr=None, mono=True)  # native sr, ресемпл ниже
+        except Exception as e_fallback:  # noqa: BLE001
+            raise RuntimeError(
+                f"soundfile не смог ({e_sf}); фолбэк librosa/ffmpeg тоже "
+                f"({type(e_fallback).__name__}: {e_fallback}). "
+                "Поставьте ffmpeg (apt install ffmpeg) или downgrade soundfile."
+            ) from e_fallback
     if sr != target_sr:
         y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)  # тот же soxr
     return np.ascontiguousarray(y, dtype=np.float32), target_sr
