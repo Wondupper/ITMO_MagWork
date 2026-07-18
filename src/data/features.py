@@ -19,10 +19,16 @@
    `utils.io`). Хэш конфига в пути кэша разводит разные наборы признаков по разным
    папкам — при возврате к прежнему набору пересчёта нет.
 
-Аудио грузится РОВНО ОДИН РАЗ в раннере (librosa, моно, ресемпл в target_sr
+Аудио грузится РОВНО ОДИН РАЗ в раннере (soundfile → моно → ресемпл в target_sr
 экстрактора), поэтому сами экстракторы — чистая математика над сигналом и легко
 тестируются. Загрузка одного файла держит в памяти единицы–десятки МБ (§3): пик
-памяти не зависит от размера датасета.
+памяти не зависит от размера датасета. Декодируем напрямую через soundfile (не
+librosa.load): при сбое видно НАСТОЯЩУЮ ошибку libsndfile, а не обёртку audioread,
+и нет скрытой зависимости от ffmpeg. Достаточно для flac/wav/ogg (текущие датасеты).
+
+Кэш самоописателен: рядом с признаками пишется `_spec.json` (все параметры +
+версии библиотек — воспроизводимость, критерий №2) и, если были сбои,
+`<dataset_id>/_failures.csv` с реальной причиной по каждому файлу.
 
 Запуск (как модуль пакета, из корня проекта):
     python -m src.data.features asvspoof2019_la -f lfcc     # один датасет
@@ -36,6 +42,7 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Iterator
@@ -43,6 +50,7 @@ from typing import ClassVar, Iterator
 import librosa
 import numpy as np
 import pandas as pd
+import soundfile as sf
 from scipy.fftpack import dct
 
 from ..config import Config, Paths, default_config
@@ -247,7 +255,8 @@ class FeatureRunStats:
     total: int
     written: int
     skipped: int
-    failures: list[tuple[str, str]]
+    failures: list[tuple[str, str, str]]   # (utt_id, path, error)
+    failures_path: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -261,10 +270,10 @@ class FeatureRunStats:
             f"    всего: {self.total}  записано: {self.written}  "
             f"пропущено(готово): {self.skipped}  ошибок: {len(self.failures)}"
         ]
-        for utt, msg in self.failures[:5]:
+        for utt, _path, msg in self.failures[:5]:
             lines.append(f"      FAIL {utt}: {msg}")
         if len(self.failures) > 5:
-            lines.append(f"      … ещё {len(self.failures) - 5} ошибок")
+            lines.append(f"      … ещё {len(self.failures) - 5} (полный список: {self.failures_path})")
         return "\n".join(lines)
 
 
@@ -278,6 +287,53 @@ def _validate_feature(arr: np.ndarray, extractor: FeatureExtractor) -> np.ndarra
     if not np.isfinite(arr).all():
         raise ValueError("в признаках NaN/Inf")
     return arr
+
+
+def _load_audio(path: str, target_sr: int) -> tuple[np.ndarray, int]:
+    """Декодировать аудио → моно float32 @ target_sr. Ошибку декодера НЕ прячем —
+    она уходит наверх как есть (LibsndfileError с внятным текстом), в отличие от
+    librosa.load, который маскирует её обёрткой audioread."""
+    y, sr = sf.read(path, dtype="float32", always_2d=False)
+    if y.ndim == 2:                      # многоканальное → моно усреднением
+        y = y.mean(axis=1)
+    if sr != target_sr:
+        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)  # тот же soxr
+    return np.ascontiguousarray(y, dtype=np.float32), target_sr
+
+
+def _write_spec(extractor: FeatureExtractor, cache_dir: Path) -> None:
+    """Положить `_spec.json` в корень папки кэша — паспорт конфигурации признаков.
+    Делает папку самоописательной: по хэшу видно, чем именно она получена."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "spec": extractor.spec(),
+        "channels": extractor.channels,
+        "cache_hash": extractor.cache_hash(),
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "versions": {
+            "librosa": librosa.__version__,
+            "soundfile": sf.__version__,
+            "libsndfile": sf.__libsndfile_version__,
+            "numpy": np.__version__,
+        },
+    }
+    (cache_dir / "_spec.json").write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+
+def _write_failures(failures: list[tuple[str, str, str]], cache_dir: Path, dataset_id: str) -> Path | None:
+    """Сохранить список сбойных файлов с реальной причиной → честная цифра «N не
+    декодировалось» для работы, а не обрезанный вывод в консоль. Пусто → чистим
+    старый файл (сбои исправлены). Отражает последний прогон по этому датасету."""
+    out = cache_dir / dataset_id / "_failures.csv"
+    if not failures:
+        if out.exists():
+            out.unlink()
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(failures, columns=["utt_id", "path", "error"]).to_csv(out, index=False)
+    return out
 
 
 def extract_features(
@@ -312,9 +368,10 @@ def extract_features(
 
     raw_root = config.paths.raw_dataset(dataset_id)
     cache_dir = extractor.cache_dir(config.paths)
+    _write_spec(extractor, cache_dir)  # паспорт конфигурации — до тяжёлой работы
     total = len(df)
     written = skipped = 0
-    failures: list[tuple[str, str]] = []
+    failures: list[tuple[str, str, str]] = []
     proc = _maybe_process()
 
     for i, row in enumerate(_progress(df.itertuples(index=False), total, dataset_id, extractor.name)):
@@ -323,17 +380,19 @@ def extract_features(
             skipped += 1
             continue
         try:
-            y, sr = librosa.load(str(raw_root / row.path), sr=extractor.target_sr, mono=True)
+            y, sr = _load_audio(str(raw_root / row.path), extractor.target_sr)
             arr = _validate_feature(extractor.extract(y, sr), extractor)
             atomic_write_npy(arr, out)
             written += 1
         except Exception as e:  # noqa: BLE001 — один битый файл не должен ронять прогон
-            failures.append((str(row.utt_id), f"{type(e).__name__}: {e}"))
+            failures.append((str(row.utt_id), str(row.path), f"{type(e).__name__}: {e}"))
         if proc is not None and log_every and (i + 1) % log_every == 0:
             rss = proc.memory_info().rss / 2 ** 20
             print(f"    … {i + 1}/{total}  RSS={rss:.0f} МБ", flush=True)
 
-    return FeatureRunStats(dataset_id, extractor.name, cache_dir, total, written, skipped, failures)
+    failures_path = _write_failures(failures, cache_dir, dataset_id)
+    return FeatureRunStats(dataset_id, extractor.name, cache_dir, total, written, skipped,
+                           failures, failures_path)
 
 
 # --- необязательные удобства прогона (мягкие зависимости) --------------------
