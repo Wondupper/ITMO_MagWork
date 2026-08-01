@@ -72,6 +72,9 @@ class FeatureExtractor(ABC):
 
     #: Ключ реестра; совпадает с именем в CLI (-f) и первой частью папки кэша.
     name: ClassVar[str] = ""
+    #: источник реализации — входит в хэш кэша: MFCC/LFCC из разных библиотек
+    #: дают разные числа при одинаковых параметрах (§6.5).
+    impl: ClassVar[str] = ""
 
     @property
     @abstractmethod
@@ -90,7 +93,7 @@ class FeatureExtractor(ABC):
     # --- общее для всех экстракторов ---------------------------------------
     def spec(self) -> dict:
         """Канонический словарь для хэша: имя + все поля-параметры."""
-        return {"name": self.name, **asdict(self)}
+        return {"name": self.name, "impl": self.impl, **asdict(self)}
 
     def cache_hash(self, n: int = 10) -> str:
         """Короткий sha1 от отсортированного JSON конфига признаков (§6.5)."""
@@ -147,6 +150,7 @@ class LogMelSpectrogram(FeatureExtractor):
     делает Стадия 2, а не кэш).
     """
     name: ClassVar[str] = "logmel"
+    impl: ClassVar[str] = "librosa"
 
     target_sr: int = 16000       # стандарт ASVspoof (§ Приложение А)
     n_fft: int = 512
@@ -182,6 +186,7 @@ class LFCC(FeatureExtractor):
     классический LFCC-60).
     """
     name: ClassVar[str] = "lfcc"
+    impl: ClassVar[str] = "librosa"
 
     target_sr: int = 16000
     n_fft: int = 512
@@ -306,7 +311,7 @@ def _load_audio(path: str, target_sr: int) -> tuple[np.ndarray, int]:
         y, sr = sf.read(path, dtype="float32", always_2d=False)
         if y.ndim == 2:                      # многоканальное → моно усреднением
             y = y.mean(axis=1)
-    except sf.LibsndfileError as e_sf:
+    except Exception as e_sf:  # noqa: BLE001 — любой сбой soundfile ведёт к фолбэку
         try:
             with warnings.catch_warnings():   # глушим FutureWarning audioread — фолбэк намеренный
                 warnings.simplefilter("ignore")
@@ -323,37 +328,89 @@ def _load_audio(path: str, target_sr: int) -> tuple[np.ndarray, int]:
 
 
 def _write_spec(extractor: FeatureExtractor, cache_dir: Path) -> None:
-    """Положить `_spec.json` в корень папки кэша — паспорт конфигурации признаков.
-    Делает папку самоописательной: по хэшу видно, чем именно она получена."""
+    """Паспорт папки кэша. Пишется один раз — при её создании.
+
+    Перезаписывать нельзя: created_utc и versions тогда всегда показывали бы
+    последний прогон, и факт «часть кэша посчитана другой версией библиотеки»
+    молча терялся бы. Вместо этого версии сверяются: расхождение печатается
+    и дописывается в versions_history.
+    """
     cache_dir.mkdir(parents=True, exist_ok=True)
+    versions = {
+        "librosa": librosa.__version__,
+        "soundfile": sf.__version__,
+        "libsndfile": sf.__libsndfile_version__,
+        "numpy": np.__version__,
+    }
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    path = cache_dir / "_spec.json"
+
+    if path.exists():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):   # JSONDecodeError — подкласс ValueError
+            doc = None
+        if doc is not None:
+            known = doc.get("versions", {})
+            diff = {k: (known.get(k), v) for k, v in versions.items() if known.get(k) != v}
+            if diff:
+                print(f"    ВНИМАНИЕ: кэш {cache_dir.name} собран другими версиями библиотек:")
+                for lib, (was, became) in sorted(diff.items()):
+                    print(f"      {lib}: {was} -> {became}")
+                doc.setdefault("versions_history", []).append(
+                    {"seen_utc": now, "versions": versions}
+                )
+                path.write_text(
+                    json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+            return
+
     doc = {
         "spec": extractor.spec(),
         "channels": extractor.channels,
         "cache_hash": extractor.cache_hash(),
-        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "versions": {
-            "librosa": librosa.__version__,
-            "soundfile": sf.__version__,
-            "libsndfile": sf.__libsndfile_version__,
-            "numpy": np.__version__,
-        },
+        "created_utc": now,
+        "versions": versions,
     }
-    (cache_dir / "_spec.json").write_text(
+    path.write_text(
         json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
     )
 
 
-def _write_failures(failures: list[tuple[str, str, str]], cache_dir: Path, dataset_id: str) -> Path | None:
-    """Сохранить список сбойных файлов с реальной причиной → честная цифра «N не
-    декодировалось» для работы, а не обрезанный вывод в консоль. Пусто → чистим
-    старый файл (сбои исправлены). Отражает последний прогон по этому датасету."""
+def _write_failures(
+    failures: list[tuple[str, str, str]],
+    cache_dir: Path,
+    dataset_id: str,
+    *,
+    partial: bool = False,
+) -> Path | None:
+    """Список сбойных файлов рядом с данными датасета.
+
+    `partial=True` (прогон с --limit) означает, что часть манифеста вообще не
+    обрабатывалась → старый список не устарел, его нельзя удалять; новые сбои
+    дописываются поверх (дедуп по utt_id). Полный прогон перезаписывает файл
+    целиком: файлы, которые теперь посчитались, законно исчезают из списка.
+    """
     out = cache_dir / dataset_id / "_failures.csv"
-    if not failures:
+    cols = ["utt_id", "path", "error"]
+    new = pd.DataFrame(failures, columns=cols)
+
+    if partial:
+        if new.empty:
+            return out if out.exists() else None
+        if out.exists():
+            old = pd.read_csv(out, dtype=str).reindex(columns=cols)
+            new = pd.concat([old, new], ignore_index=True).drop_duplicates(
+                subset="utt_id", keep="last"
+            )
+    elif new.empty:
         if out.exists():
             out.unlink()
         return None
+
     out.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(failures, columns=["utt_id", "path", "error"]).to_csv(out, index=False)
+    new.to_csv(out, index=False)
     return out
 
 
@@ -411,7 +468,7 @@ def extract_features(
             rss = proc.memory_info().rss / 2 ** 20
             print(f"    … {i + 1}/{total}  RSS={rss:.0f} МБ", flush=True)
 
-    failures_path = _write_failures(failures, cache_dir, dataset_id)
+    failures_path = _write_failures(failures, cache_dir, dataset_id, partial=limit is not None)
     return FeatureRunStats(dataset_id, extractor.name, cache_dir, total, written, skipped,
                            failures, failures_path)
 
