@@ -1,0 +1,44 @@
+# Пример конфига Стадии 2 (обучение). Раннер: python -m src.train --config <этот файл>
+# Профиль по умолчанию — SMOKE: маленькая стратифицированная подвыборка + пара эпох,
+# чтобы за минуты убедиться, что цикл, чекпойнты, лог и val-EER работают (§6.4).
+# Полный прогон = убрать секцию data.subset (тот же код, тот же кэш).
+
+name: smoke_lfcc_statpool          # → артефакты в experiments/smoke_lfcc_statpool/
+
+feature:
+  name: lfcc                       # ключ реестра экстракторов (features.py, --list)
+  # overrides: {}                  # опц.: переопределить гиперпараметры признака;
+                                   #      меняет хэш → должен совпасть с папкой кэша
+
+model:
+  name: statpool_mlp               # ключ реестра моделей (train.py --list)
+  params:
+    hidden: 128
+    dropout: 0.3
+
+data:
+  # Селекторы (dataset_id, split); при нескольких — склейка (§3). train/dev из 2019 LA.
+  train:
+    - {dataset_id: asvspoof2019_la, split: train}
+  val:
+    - {dataset_id: asvspoof2019_la, split: dev}
+  t_fixed: 400                     # общая длина в кадрах (~4 c при hop 10 мс); §6.6
+  subset:                          # SMOKE-подвыборка (§6.4); убрать для полного прогона
+    n_train: 400
+    n_val: 200
+    seed: 1337
+    stratify: [label]              # баланс классов; при склейке датасетов + dataset_id
+
+train:
+  epochs: 3
+  lr: 0.001
+  weight_decay: 0.0
+  pos_weight: auto                 # auto | none | <число>: коррекция дисбаланса классов
+  ckpt_every: 1                    # сохранять чекпойнт каждые N эпох (§7)
+  keep_last: 3                     # ротация: держать последние K чекпойнтов (§7)
+
+runtime:                           # переопределяет дефолты config.py (§2, §3)
+  device: cpu
+  batch_size: 16
+  num_workers: 0
+  seed: 1337
