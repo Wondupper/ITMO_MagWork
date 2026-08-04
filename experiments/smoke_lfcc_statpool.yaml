@@ -24,13 +24,13 @@ data:
     - {dataset_id: asvspoof2019_la, split: dev}
   t_fixed: 400                     # общая длина в кадрах (~4 c при hop 10 мс); §6.6
   subset:                          # SMOKE-подвыборка (§6.4); убрать для полного прогона
-    n_train: 400
-    n_val: 200
+    n_train: 4000
+    n_val: 2000
     seed: 1337
     stratify: [label]              # баланс классов; при склейке датасетов + dataset_id
 
 train:
-  epochs: 3
+  epochs: 5
   lr: 0.001
   weight_decay: 0.0
   pos_weight: auto                 # auto | none | <число>: коррекция дисбаланса классов
