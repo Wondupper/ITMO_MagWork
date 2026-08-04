@@ -108,9 +108,9 @@ def _maybe_subset(
 
 def _make_loader(
     manifest: pd.DataFrame, cache_dir: Path, channels: int, t_fixed: int,
-    batch_size: int, num_workers: int, *, shuffle: bool,
+    batch_size: int, num_workers: int, *, shuffle: bool, random_crop: bool = False,
 ) -> DataLoader:
-    ds = FeatureCacheDataset(manifest, cache_dir, channels, t_fixed)
+    ds = FeatureCacheDataset(manifest, cache_dir, channels, t_fixed, random_crop=random_crop)
     return DataLoader(
         ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
         collate_fn=collate, pin_memory=False, drop_last=False,
@@ -172,8 +172,15 @@ def _list_ckpts(exp_dir: Path) -> list[tuple[int, Path]]:
 
 
 def _rotate_ckpts(exp_dir: Path, keep_last: int) -> None:
+    """Оставить последние keep_last чекпойнтов, старые удалить (§7).
+
+    keep_last ≥ 1 гарантируется вызывающим кодом (клампится в run). Защитно: при
+    некорректном keep_last < 1 НИЧЕГО не удаляем — остаться без чекпойнта хуже, чем
+    сохранить лишний, ведь это ломает возобновляемость."""
+    if keep_last < 1:
+        return
     ckpts = _list_ckpts(exp_dir)
-    for _epoch, p in ckpts[:-keep_last] if keep_last > 0 else ckpts:
+    for _epoch, p in ckpts[:-keep_last]:
         try:
             p.unlink()
         except OSError:
@@ -293,9 +300,9 @@ def run(config: Config, spec: dict) -> Path:
           f"(признак {extractor.name}, C={channels}, t_fixed={t_fixed})")
 
     train_loader = _make_loader(train_df, cache_dir, channels, t_fixed,
-                                rt.batch_size, rt.num_workers, shuffle=True)
+                                rt.batch_size, rt.num_workers, shuffle=True, random_crop=True)
     val_loader = _make_loader(val_df, cache_dir, channels, t_fixed,
-                              rt.batch_size, rt.num_workers, shuffle=False)
+                              rt.batch_size, rt.num_workers, shuffle=False, random_crop=False)
 
     # --- модель / лосс / оптимизатор ---
     mspec = spec["model"]
@@ -314,7 +321,7 @@ def run(config: Config, spec: dict) -> Path:
 
     epochs = int(tcfg.get("epochs", 3))
     ckpt_every = int(tcfg.get("ckpt_every", 1))
-    keep_last = int(tcfg.get("keep_last", 3))
+    keep_last = max(1, int(tcfg.get("keep_last", 3)))  # ≥1: без чекпойнта нет resume (§7)
 
     # --- возобновление с последнего чекпойнта (§7) ---
     start_epoch, best_eer = _maybe_resume(exp_dir, model, optimizer, device, metrics_path)

@@ -26,21 +26,30 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-# Как приводить длинный сигнал к t_fixed.
-_CROP = "start"     # детерминированный кроп с начала (воспроизводимость; §7)
-
-
-def _fix_length(x: np.ndarray, t_fixed: int) -> np.ndarray:
+def _fix_length(x: np.ndarray, t_fixed: int, *, random_crop: bool = False) -> np.ndarray:
     """Привести [T, C] к [t_fixed, C]: кроп длинного, повтор-паддинг короткого.
 
     Повтор (а не нулевой паддинг) — доменный стандарт: короткая запись повторяется
     до нужной длины, все кадры остаются «настоящими», пулинг не разбавляется нулями.
+
+    Кроп длинного файла:
+      • random_crop=False (валидация/оценка) — детерминированное окно с начала:
+        воспроизводимо, один и тот же вход при каждом проходе;
+      • random_crop=True (обучение) — случайное окно из записи. Лёгкая аугментация:
+        за эпохи модель видит РАЗНЫЕ фрагменты длинных файлов, а не всегда первые
+        t_fixed кадров → больше эффективного разнообразия и лучше обобщение (доменный
+        стандарт анти-спуфинга). Смещение берётся из torch-ГСЧ, который DataLoader
+        сеет по воркерам и эпохам, — прогон остаётся воспроизводимым от общего seed
+        (§7), но окно закономерно меняется от эпохи к эпохе.
+    Короткий файл повторяется с начала в обоих режимах: весь сигнал и так виден,
+    рандомизировать нечего.
     """
     t = x.shape[0]
     if t == t_fixed:
         return x
     if t > t_fixed:
-        return x[:t_fixed]                       # _CROP == "start"
+        start = int(torch.randint(0, t - t_fixed + 1, (1,)).item()) if random_crop else 0
+        return x[start:start + t_fixed]
     reps = -(-t_fixed // t)                       # ceil(t_fixed / t)
     return np.tile(x, (reps, 1))[:t_fixed]
 
@@ -59,6 +68,8 @@ class FeatureCacheDataset(Dataset):
         массив проверяется на [., C] — дешёвый аналог валидатора (§6.6): ловит
         рассинхрон «признак ≠ модель» на уровне данных, а не молча.
     t_fixed : общая длина, к которой приводится каждый пример.
+    random_crop : случайное окно из длинных файлов (аугментация обучения) vs окно с
+        начала (валидация/оценка). Train-загрузчик ставит True, val — False.
 
     Отсутствующие в кэше файлы (напр. сбойные на Стадии 1 → в `_failures.csv`, без
     `.npy`) отфильтровываются в `__init__` с предупреждением: так обучение не падает
@@ -71,10 +82,12 @@ class FeatureCacheDataset(Dataset):
         cache_dir: str | Path,
         expected_channels: int,
         t_fixed: int,
+        random_crop: bool = False,
     ):
         self.cache_dir = Path(cache_dir)
         self.expected_channels = int(expected_channels)
         self.t_fixed = int(t_fixed)
+        self.random_crop = bool(random_crop)
 
         present = self._filter_present(manifest)
         # Держим только лёгкие метаданные как numpy-массивы (не DataFrame) — так
@@ -117,7 +130,8 @@ class FeatureCacheDataset(Dataset):
                 f"{self.expected_channels}], получено {tuple(arr.shape)} — "
                 "кэш не соответствует признаку модели (§6.6)."
             )
-        x = _fix_length(np.ascontiguousarray(arr, dtype=np.float32), self.t_fixed)
+        x = _fix_length(np.ascontiguousarray(arr, dtype=np.float32), self.t_fixed,
+                        random_crop=self.random_crop)
         length = self.t_fixed  # при повтор-паддинге все кадры валидны
         return (
             torch.from_numpy(x),                       # [t_fixed, C] float32
