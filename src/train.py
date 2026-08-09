@@ -44,12 +44,11 @@ from torch.utils.data import DataLoader
 from .config import Config, Paths, Runtime, default_config
 from .data.dataset import FeatureCacheDataset, collate
 from .data.features import available_extractors, get_extractor
-from .data.subsets import DEFAULT_STRATIFY, make_subset
+from .data.selectors import load_selectors, stratify_for
+from .data.subsets import make_subset
 from .models import available_models, get_model
+from .utils.inference import predict_scores
 from .utils.metrics import compute_eer
-
-# Колонки манифеста, реально нужные Стадии 2 (§7: не тянем лишнего).
-_BASE_COLUMNS = ["dataset_id", "utt_id", "label", "split"]
 
 
 # =============================================================================
@@ -74,31 +73,6 @@ def _resolve_device(name: str) -> torch.device:
 # =============================================================================
 # Данные: манифесты → (подвыборка) → Dataset/DataLoader
 # =============================================================================
-def _load_selectors(paths: Paths, selectors: list[dict], stratify: Iterable[str]) -> pd.DataFrame:
-    """Прочитать нужные строки манифеста(ов) по списку (dataset_id, split) и склеить.
-
-    Читаются только колонки, нужные Стадии 2 плюс колонки стратификации (§7).
-    Единственные законные операции над dataset_id — фильтр по split и concat
-    (правило не-ветвления, §3): никакого `if dataset_id == …`.
-    """
-    need = list(dict.fromkeys([*_BASE_COLUMNS, *stratify]))  # уникальные, порядок стабилен
-    frames = []
-    for sel in selectors:
-        ds, sp = sel["dataset_id"], sel["split"]
-        mpath = paths.manifest_path(ds)
-        if not mpath.exists():
-            raise FileNotFoundError(
-                f"нет манифеста {mpath} — сначала Стадия 0: "
-                f"python -m src.data.manifest {ds}"
-            )
-        df = pd.read_parquet(mpath, columns=[c for c in need if c is not None])
-        df = df[df["split"] == sp]
-        if df.empty:
-            raise ValueError(f"[{ds}] нет строк со split='{sp}' — проверьте селектор.")
-        frames.append(df)
-    return pd.concat(frames, ignore_index=True)
-
-
 def _maybe_subset(
     df: pd.DataFrame, n: int | None, seed: int, stratify: Iterable[str]
 ) -> pd.DataFrame:
@@ -241,18 +215,13 @@ def _train_one_epoch(model, loader, criterion, optimizer, device) -> float:
     return total / max(count, 1)
 
 
-@torch.no_grad()
 def _evaluate(model, loader, device):
-    """Собрать скоры/метки по val и посчитать EER (§8). Скор = сырой логит (спуф=1)."""
-    model.eval()
-    scores, labels = [], []
-    for x, y, lengths in loader:
-        x, lengths = x.to(device), lengths.to(device)
-        logits = model(x, lengths)
-        scores.append(logits.detach().cpu().numpy())
-        labels.append(y.numpy())
-    scores = np.concatenate(scores) if scores else np.array([])
-    labels = np.concatenate(labels) if labels else np.array([])
+    """Собрать скоры/метки по val и посчитать EER (§8).
+
+    Проход — общий с Стадией 3 (`utils.inference`), метрика — общая утилита (§8):
+    val-EER и итоговый EER получаются буквально одним кодом, поэтому сопоставимы.
+    """
+    scores, labels = predict_scores(model, loader, device)
     return compute_eer(scores, labels)
 
 
@@ -289,11 +258,11 @@ def run(config: Config, spec: dict) -> Path:
     train_sel = data["train"]
     val_sel = data["val"]
     # Стратификация: из YAML или дефолт; при склейке >1 датасета добавляем dataset_id.
-    strat_train = _stratify_for(sub.get("stratify"), train_sel)
-    strat_val = _stratify_for(sub.get("stratify"), val_sel)
+    strat_train = stratify_for(sub.get("stratify"), train_sel)
+    strat_val = stratify_for(sub.get("stratify"), val_sel)
 
-    train_df = _load_selectors(paths, train_sel, strat_train)
-    val_df = _load_selectors(paths, val_sel, strat_val)
+    train_df = load_selectors(paths, train_sel, strat_train)
+    val_df = load_selectors(paths, val_sel, strat_val)
     train_df = _maybe_subset(train_df, sub.get("n_train"), sub_seed, strat_train)
     val_df = _maybe_subset(val_df, sub.get("n_val"), sub_seed, strat_val)
     print(f"    train: {len(train_df)} примеров, val: {len(val_df)} примеров "
@@ -306,7 +275,8 @@ def run(config: Config, spec: dict) -> Path:
 
     # --- модель / лосс / оптимизатор ---
     mspec = spec["model"]
-    model = get_model(mspec["name"], in_channels=channels, **mspec.get("params", {})).to(device)
+    model_params = dict(mspec.get("params", {}))  # уходят в чекпойнт (§7)
+    model = get_model(mspec["name"], in_channels=channels, **model_params).to(device)
     print(f"    модель {mspec['name']}: {model.num_parameters():,} параметров")
 
     tcfg = spec.get("train", {})
@@ -344,34 +314,24 @@ def run(config: Config, spec: dict) -> Path:
         if not np.isnan(val.eer) and val.eer < best_eer:
             best_eer = val.eer
             _atomic_torch_save(_state(epoch, model, optimizer, best_eer, extractor,
-                                      mspec["name"], channels, t_fixed),
+                                      mspec["name"], model_params, channels, t_fixed),
                                exp_dir / "best.pt")
 
         # периодический чекпойнт + ротация
         if ckpt_every > 0 and (epoch % ckpt_every == 0 or epoch == epochs):
             _atomic_torch_save(_state(epoch, model, optimizer, best_eer, extractor,
-                                      mspec["name"], channels, t_fixed),
+                                      mspec["name"], model_params, channels, t_fixed),
                                _ckpt_path(exp_dir, epoch))
             _rotate_ckpts(exp_dir, keep_last)
 
     # финальные веса (последняя эпоха)
     _atomic_torch_save(_state(epochs, model, optimizer, best_eer, extractor,
-                              mspec["name"], channels, t_fixed),
+                              mspec["name"], model_params, channels, t_fixed),
                        exp_dir / "final.pt")
     best_path = exp_dir / "best.pt"
     best_disp = "nan" if np.isnan(best_eer) else f"{best_eer:.4f}"
     print(f"готово. лучший val_EER={best_disp}. веса: {best_path if best_path.exists() else exp_dir / 'final.pt'}")
     return best_path if best_path.exists() else exp_dir / "final.pt"
-
-
-def _stratify_for(yaml_stratify, selectors: list[dict]) -> tuple[str, ...]:
-    """Колонки стратификации подвыборки. Из YAML или дефолт (§6.4); при склейке
-    нескольких датасетов обязательно добавляем dataset_id (§6.4)."""
-    strat = tuple(yaml_stratify) if yaml_stratify else DEFAULT_STRATIFY
-    datasets = {s["dataset_id"] for s in selectors}
-    if len(datasets) > 1 and "dataset_id" not in strat:
-        strat = ("dataset_id", *strat)
-    return strat
 
 
 def _preflight_cache(cache_dir: Path, extractor, channels: int) -> None:
@@ -396,8 +356,16 @@ def _preflight_cache(cache_dir: Path, extractor, channels: int) -> None:
         )
 
 
-def _state(epoch, model, optimizer, best_eer, extractor, model_name, channels, t_fixed) -> dict:
-    """Содержимое чекпойнта (§7): веса + состояние оптимизатора + метаданные прогона."""
+def _state(epoch, model, optimizer, best_eer, extractor, model_name, model_params,
+           channels, t_fixed) -> dict:
+    """Содержимое чекпойнта (§7): веса + состояние оптимизатора + метаданные прогона.
+
+    `model_params` (гиперпараметры архитектуры из YAML) обязательны здесь по той же
+    причине, что и `in_channels`: без них `get_model(model_name, in_channels)`
+    соберёт сеть с ДЕФОЛТНЫМИ размерами, и `load_state_dict` упадёт при любом
+    отличии от конфига обучения. С ними чекпойнт самодостаточен — Стадия 3 (и любой
+    будущий потребитель весов) восстанавливает модель, не имея YAML под рукой.
+    """
     return {
         "epoch": epoch,
         "model": model.state_dict(),
@@ -405,6 +373,7 @@ def _state(epoch, model, optimizer, best_eer, extractor, model_name, channels, t
         "best_eer": best_eer,
         "meta": {
             "model_name": model_name,
+            "model_params": dict(model_params or {}),
             "feature": extractor.name,
             "feature_hash": extractor.cache_hash(),
             "in_channels": channels,

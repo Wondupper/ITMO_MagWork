@@ -327,6 +327,17 @@ def _load_audio(path: str, target_sr: int) -> tuple[np.ndarray, int]:
     return np.ascontiguousarray(y, dtype=np.float32), target_sr
 
 
+def load_audio(path: str | Path, target_sr: int) -> tuple[np.ndarray, int]:
+    """Публичная обёртка над декодером стадии: (моно float32 @ target_sr, sr).
+
+    Нужна ноутбукам/`viz`, чтобы они видели РОВНО тот сигнал, из которого считался
+    кэш: тот же декодер, тот же фолбэк на ffmpeg (§2), тот же ресемпл. Свой
+    `librosa.load` в ноутбуке дал бы слегка другие числа и незаметно рассогласовал
+    картинку с признаками.
+    """
+    return _load_audio(str(path), int(target_sr))
+
+
 def _write_spec(extractor: FeatureExtractor, cache_dir: Path) -> None:
     """Паспорт папки кэша. Пишется один раз — при её создании.
 
