@@ -2,3 +2,5 @@
 /data/
 /Zips/
 /.idea
+/reports/
+/experiments/*/
