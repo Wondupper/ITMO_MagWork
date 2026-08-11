@@ -23,7 +23,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .base import AntispoofModel, register_model
+from .model_base import AntispoofModel, register_model
 
 
 def _masked_stats(x: torch.Tensor, lengths: torch.Tensor, eps: float = 1e-5):

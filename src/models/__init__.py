@@ -5,7 +5,7 @@
 только импортирован пакет `models`. Новая архитектура = новый модуль + строка
 импорта ниже (или просто импорт в train.py) — цикл обучения не трогается.
 """
-from .base import AntispoofModel, available_models, get_model, register_model
+from .model_base import AntispoofModel, available_models, get_model, register_model
 from . import statpool  # noqa: F401 — импорт ради регистрации StatPoolMLP
 
 __all__ = ["AntispoofModel", "available_models", "get_model", "register_model"]
