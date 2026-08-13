@@ -1,0 +1,66 @@
+[project]
+name = "antispoof"
+version = "0.1.0"
+description = "Выявление синтетической речи в аудио (магистерская работа)"
+# §2: язык проекта — Python 3.12. Верхняя граница держит всех на одном миноре:
+# .python-version заставит uv скачать нужный интерпретатор, если его нет в системе.
+requires-python = ">=3.12,<3.13"
+
+# Прямые зависимости — только то, что импортируется в src/ (транзитивные держит uv.lock).
+# Нижние границы = версии, на которых пайплайн реально прогонялся; апгрейд разрешён,
+# даунгрейд ниже проверенного — нет.
+dependencies = [
+    "numpy>=2.4",
+    "pandas>=3.0",
+    "pyarrow>=24.0",        # движок .parquet: манифесты и scores (§2, §6.1)
+    "librosa>=0.11",        # мел/STFT/delta и ресемпл (Стадия 1)
+    "soundfile==0.12.1",    # ТОЧНЫЙ ПИН, см. §2: 0.12.1 несёт libsndfile 1.2.0
+    "scipy>=1.18",          # DCT в lfcc; нормальная шкала DET (viz/results.py)
+    "scikit-learn>=1.9",    # roc_curve → EER (utils/metrics.py)
+    "matplotlib>=3.11",     # весь слой src/viz
+    "pyyaml>=6.0",          # конфиги Стадий 2–3
+    "tqdm>=4.68",           # прогресс Стадии 1 (мягкая зависимость в коде, но нужна на деле)
+    "psutil>=7.2",          # лог RSS на длинных прогонах (§7)
+]
+
+# torch вынесен в экстры: маркеры платформы различают ОС, но НЕ наличие GPU,
+# а Windows+NVIDIA и Linux-без-GPU нужны оба. Выбор делает человек, одной командой.
+[project.optional-dependencies]
+cpu = ["torch>=2.12"]
+gpu = ["torch>=2.12"]
+
+# Ноутбуки (§5) — вне рантайма пайплайна: uv sync --no-dev даёт голое окружение прогона.
+# jupyterlab здесь намеренно: проект не должен предполагать конкретный редактор.
+# ipykernel нужен и внешним клиентам (VS Code) — он ядро, а не интерфейс.
+[dependency-groups]
+dev = [
+    "jupyterlab>=4.2",
+    "ipykernel>=7.3",
+    "ipywidgets>=8.1",
+]
+
+[tool.uv]
+# Проект не собирается и не устанавливается как пакет: у модулей относительные импорты
+# (`from ..config import ...`), имя пакета — буквально `src`. Запуск остаётся прежним:
+# `uv run python -m src.<стадия>` из корня проекта (§4).
+package = false
+# cpu и gpu взаимоисключающи — uv держит в одном uv.lock обе резолюции.
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu130", extra = "gpu" },
+]
+
+# explicit = true: с этих индексов ставится только то, что явно на них направлено.
+# Всё остальное — с PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

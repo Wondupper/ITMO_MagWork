@@ -4,3 +4,25 @@
 /.idea
 /reports/
 /experiments/*/
+
+# --- окружение (uv создаёт заново из uv.lock; сам uv.lock КОММИТИТСЯ) ---
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# --- данные и артефакты стадий (§5): воспроизводятся прогоном, в git не место ---
+data/raw/
+data/features/
+data/manifests/
+
+# Конфиги экспериментов (experiments/<exp>.yaml) — КОММИТЯТСЯ.
+# Результаты прогонов (experiments/<exp>/: веса, чекпойнты, metrics.jsonl,
+# scores.parquet, eval_metrics.json) — нет.
+experiments/*/
+
+# Экспорт графиков для текста работы — пересобирается ноутбуками.
+reports/figures/
+
+# --- прочее ---
+.DS_Store
