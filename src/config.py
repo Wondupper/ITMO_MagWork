@@ -57,6 +57,14 @@ class Paths:
         """Полный манифест датасета: data/manifests/<dataset_id>.parquet."""
         return self.manifests / f"{dataset_id}.parquet"
 
+    def manifest_passport_path(self, dataset_id: str) -> Path:
+        """Паспорт манифеста: data/manifests/<dataset_id>.manifest.json (§6.5).
+
+        Лежит рядом с самим манифестом намеренно: сводка и провенанс бесполезны
+        в отрыве от файла, который они описывают.
+        """
+        return self.manifests / f"{dataset_id}.manifest.json"
+
 
 @dataclass(frozen=True)
 class Runtime:

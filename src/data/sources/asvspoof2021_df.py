@@ -11,7 +11,13 @@
   `condition` ← поле 3: условие сжатия. Наблюдаемые значения (9 шт.):
                 nocodec; {high,low}_{mp3,m4a,ogg}; mp3m4a, oggm4a (двойное
                 перекодирование). Это главная ось для разбивки EER по кодекам.
-  `vocoder`   ← поле 9: вокодер спуф-системы; `-` у части строк → NULL.
+  `vocoder`   ← поле 9: вокодер спуф-системы. ВНИМАНИЕ: это поле размечено
+                заглушками так же, как атака — у подлинных строк там литерал
+                `bonafide`, у части спуфа `unknown`; и то и другое → NULL
+                (`norm_vocoder`), иначе `unknown` стал бы псевдогруппой в
+                разбивке EER. Наблюдаемые значения: traditional_vocoder,
+                neural_vocoder_autoregressive, neural_vocoder_nonautoregressive,
+                waveform_concatenation.
 
 ВНИМАНИЕ: `condition` — сжатие СИГНАЛА, а колонка `codec` — формат КОНТЕЙНЕРА
 файла на диске (здесь всегда flac). Разные вещи, см. §6.1.
@@ -31,6 +37,7 @@ from .common import (
     label_to_int,
     norm_attack,
     norm_condition,
+    norm_vocoder,
     protocol_table,
 )
 from .base import DatasetAdapter, register
@@ -75,7 +82,7 @@ class ASVspoof2021DF(DatasetAdapter):
                 "split": "test",  # eval → test (§6.3)
                 "attack_type": norm_attack(f["attack"], label),
                 "condition": norm_condition(f["condition"]),
-                "vocoder": norm_condition(f["vocoder"]),
+                "vocoder": norm_vocoder(f["vocoder"], label),
                 "speaker_id": f["speaker_id"],
                 "codec": codec_from_suffix(audio),
             })

@@ -24,6 +24,25 @@ def atomic_write_parquet(df: pd.DataFrame, path: str | Path) -> Path:
     os.replace(tmp, path)  # атомарно в пределах одной ФС
     return path
 
+def atomic_write_json(doc: dict, path: str | Path) -> Path:
+    """Записать JSON атомарно (§7); стиль как у `_spec.json` Стадии 1.
+
+    `sort_keys=True` — чтобы диффы между прогонами показывали изменившиеся
+    значения, а не переставленные ключи; `ensure_ascii=False` — чтобы русские
+    строки читались глазами, а не как \\uXXXX.
+    """
+    import json
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    os.replace(tmp, path)  # атомарно в пределах одной ФС
+    return path
+
+
 def atomic_write_npy(arr: np.ndarray, path: str | Path) -> Path:
     """Записать .npy атомарно: временный файл рядом, затем os.replace (§7).
 

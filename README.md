@@ -409,6 +409,7 @@ val-EER живы. **Полный прогон = убрать секцию `data.
 | Путь | Что это | Кто пишет |
 |---|---|---|
 | `data/manifests/<ds>.parquet` | канонический индекс датасета | Стадия 0 |
+| `data/manifests/<ds>.manifest.json` | паспорт манифеста: состав, отпечаток, провенанс | Стадия 0 |
 | `data/manifests/subsets/*.parquet` | сохранённая подвыборка (опционально) | `src/data/subsets.py` |
 | `data/features/<feat>-<hash>/<ds>/<utt>.npy` | признаки одного примера, `[T, C]` float32 | Стадия 1 |
 | `data/features/<feat>-<hash>/_spec.json` | паспорт кэша: параметры + версии библиотек | Стадия 1 |

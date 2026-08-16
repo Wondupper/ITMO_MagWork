@@ -33,19 +33,38 @@ def label_to_int(s: str) -> int:
     raise ValueError(f"неизвестная метка {s!r} (ожидалось spoof/bonafide)")
 
 
-def norm_attack(attack: str | None, label_int: int):
-    """Нормализовать поле атаки в canonical attack_type или NULL.
+def _norm_spoof_only(value: str | None, label_int: int):
+    """Общий разбор полей, которые определены ТОЛЬКО у спуфа (атака, вокодер).
 
-    У подлинных записей атаки нет → NULL. Сентинелы (`-`, `bonafide`, …) тоже
-    → NULL. Это снимает ловушку из Приложения А (LA bonafide=`bonafide`,
-    DF bonafide=`-`) и проходит валидатор §6.1.
+    У подлинной записи такого поля нет по смыслу → NULL, независимо от того, что
+    написано в протоколе. Плюс отсев заглушек (`-`, `bonafide`, `unknown`, …):
+    §6.1 требует явный NULL, а не магическую строку.
     """
     if label_int == LABEL_BONAFIDE:
         return pd.NA
-    a = (attack or "").strip()
-    if a.lower() in _ATTACK_SENTINELS:
-        return pd.NA
-    return a
+    v = (value or "").strip()
+    return pd.NA if v.lower() in _ATTACK_SENTINELS else v
+
+
+def norm_attack(attack: str | None, label_int: int):
+    """Нормализовать поле атаки в canonical attack_type или NULL.
+
+    Снимает ловушку из Приложения А: у подлинных записей LA-2019/2021 в поле
+    атаки стоит `bonafide`, у DF — `-`; оба обязаны стать NULL (§6.1).
+    """
+    return _norm_spoof_only(attack, label_int)
+
+
+def norm_vocoder(vocoder: str | None, label_int: int):
+    """Нормализовать поле вокодера (DF-2021) или NULL.
+
+    Та же логика, что у атаки, и по той же причине: в ключах DF у подлинных
+    строк в этом поле стоит литерал `bonafide`, а у части спуфа — `unknown`.
+    Оба — заглушки, а не значения: класс восстанавливается из `label`, а
+    «вокодер не размечен» обязано быть NULL, иначе `unknown` попал бы в разбивку
+    EER отдельной псевдогруппой.
+    """
+    return _norm_spoof_only(vocoder, label_int)
 
 
 def norm_condition(value: str | None):

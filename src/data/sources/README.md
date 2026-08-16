@@ -53,7 +53,8 @@
 |---|---|
 | `label_to_int(s)` | `'spoof'` → 1, `'bonafide'` → 0, иначе ошибка. Единая конвенция меток. |
 | `norm_attack(attack, label_int)` | Приводит поле атаки к канону; строки-заглушки (`""`, `"-"`, `"bonafide"`, `"unknown"`, `"none"`, `"n/a"`) → NULL. |
-| `norm_condition(value)` | Поле условия/вокодера → строка или NULL. Заглушками считаются только `""`, `"-"`, `"n/a"`: `none`/`nocodec` — **содержательные** значения («сжатия не было»), базовая точка разбивки. |
+| `norm_vocoder(vocoder, label_int)` | Поле вокодера → строка или NULL. Логика та же, что у атаки: поле определено только у спуфа, заглушки (`bonafide`, `unknown`, `-`) → NULL. |
+| `norm_condition(value)` | Поле условия → строка или NULL. Заглушками считаются только `""`, `"-"`, `"n/a"`: `none`/`nocodec` — **содержательные** значения («сжатия не было»), базовая точка разбивки. |
 | `codec_from_suffix(path)` | Кодек **контейнера** по расширению файла. |
 | `iter_audio(root)` | Обход папки с фильтром по `AUDIO_EXTS`. |
 | `read_protocol(path)` | Чтение пробел-разделённого протокола в список полей. |
@@ -139,7 +140,7 @@ raw/
 | LA | `codec` (3) | `condition` | `none`, `alaw`, `ulaw`, `g722`, `gsm`, `opus`, `pstn` |
 | LA | `transmission` (4) | `transmission` | `loc_tx`, `sin_tx`, `ita_tx`, `mad_tx`, `-` → NULL |
 | DF | `codec` (3) | `condition` | `nocodec`; `{high,low}_{mp3,m4a,ogg}`; `mp3m4a`, `oggm4a` |
-| DF | `vocoder` (9) | `vocoder` | размечен не везде, `-` → NULL |
+| DF | `vocoder` (9) | `vocoder` | `traditional_vocoder`, `neural_vocoder_autoregressive`, `neural_vocoder_nonautoregressive`, `waveform_concatenation` |
 
 ⚠️ Колонка `codec` в манифесте — это **контейнер файла** (везде `flac`), а не
 поле 3 протокола. Кодек сигнала лежит в `condition`. Строка `codec=flac,
@@ -148,6 +149,13 @@ condition=low_mp3` не противоречива: сигнал прогнал�
 У LA поля связаны не свободно: `none` встречается только с `-`, `pstn` — только с
 `mad_tx`; остальные пять кодеков — с каждым из трёх каналов. Итого 17 комбинаций,
 а не полный декартов набор.
+
+⚠️ **Поле `vocoder` размечено теми же заглушками, что и атака** — у подлинных
+строк там литерал `bonafide`, у части спуфа `unknown`. Обрабатывается
+`norm_vocoder()` (не `norm_condition()`): оба → NULL. Иначе `unknown` стал бы в
+разбивке EER отдельной псевдогруппой, а `bonafide` продублировал бы информацию,
+которая и так есть в `label`. Обе категории восстанавливаются: подлинные — это
+`label == 0`, спуф без разметки вокодера — `label == 1 & vocoder.isna()`.
 
 **Что по-прежнему дропается:** `source` (DF), `trim`, `phase`
 (`progress`/`eval`/`hidden`), VCC-мета (10–13). Колонок под них нет; добавляются

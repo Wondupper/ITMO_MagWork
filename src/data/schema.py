@@ -150,15 +150,21 @@ def validate_manifest(df: pd.DataFrame, *, dataset_id: str | None = None) -> Non
             f"дубли ключа (dataset_id, utt_id): {int(dup.sum())} строк, напр. {example}"
         )
 
-    # 6. attack_type не должен содержать сентинелов вместо NULL — прямая ловушка из
-    #    Приложения А (LA bonafide = "bonafide", DF bonafide = "-" → обязаны стать NULL).
+    # 6. attack_type / vocoder не должны содержать сентинелов вместо NULL — прямая
+    #    ловушка из Приложения А (LA bonafide = "bonafide", DF bonafide = "-";
+    #    в поле вокодера DF у подлинных строк тоже стоит литерал "bonafide", а у
+    #    части спуфа — "unknown"). Колонки condition/transmission СЮДА НЕ ВХОДЯТ:
+    #    там "none"/"nocodec" — содержательные значения, а не заглушки.
     sentinels = {"unknown", "-", "bonafide", "none", "n/a", ""}
-    hits = {str(v).lower() for v in pd.unique(df["attack_type"].dropna())} & sentinels
-    if hits:
-        problems.append(
-            f"attack_type содержит сентинелы вместо NULL: {sorted(hits)} "
-            "(подлинные/неизвестные атаки должны быть NULL, §6.1)"
-        )
+    for col in ("attack_type", "vocoder"):
+        if col not in df.columns:
+            continue
+        hits = {str(v).lower() for v in pd.unique(df[col].dropna())} & sentinels
+        if hits:
+            problems.append(
+                f"{col} содержит сентинелы вместо NULL: {sorted(hits)} "
+                "(подлинные/неизвестные значения должны быть NULL, §6.1)"
+            )
 
     # 7. utt_id безопасен как имя файла кэша (§6.5). Неявный контракт Стадии 1:
     #    путь кэша — features/<hash>/<dataset_id>/<utt_id>.npy. Слэш или '..'
