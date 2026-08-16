@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 
@@ -33,6 +35,11 @@ LABEL_SPOOF = 1
 VALID_LABELS = {LABEL_BONAFIDE, LABEL_SPOOF}
 VALID_SPLITS = {"train", "dev", "test"}
 
+# utt_id становится ИМЕНЕМ ФАЙЛА в кэше признаков (§6.5), поэтому обязан быть
+# безопасным для файловой системы: без разделителей пути и без выхода наверх.
+_UTT_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_RESERVED_UTT_IDS = {".", ".."}
+
 # Обязательные колонки → dtype pandas. Все non-null.
 REQUIRED_DTYPES: dict[str, str] = {
     "dataset_id": "string",
@@ -42,11 +49,23 @@ REQUIRED_DTYPES: dict[str, str] = {
     "split": "string",
 }
 # Опциональные колонки → dtype. NULL (pd.NA / NaN) допустим.
+#
+# ВНИМАНИЕ, две разные вещи с похожими именами:
+#   `codec`     — формат КОНТЕЙНЕРА файла на диске (flac/wav/…), из расширения;
+#   `condition` — кодек/сжатие, применённые к САМОМУ СИГНАЛУ до сохранения
+#                 (напр. `low_mp3` в DF-2021, `g722` в LA-2021). Файл при этом
+#                 лежит на диске как flac.
+# Значения `condition`, `transmission`, `vocoder` ЛОКАЛЬНЫ для датасета — как и
+# `attack_type`. Группировать по ним допустимо только внутри одного dataset_id;
+# `low_mp3` из DF и `none` из LA живут в разных пространствах имён.
 OPTIONAL_DTYPES: dict[str, str] = {
     "attack_type": "string",
+    "condition": "string",      # условие сжатия/кодека сигнала
+    "transmission": "string",   # канал передачи (LA-2021: ita_tx/loc_tx/sin_tx/mad_tx)
+    "vocoder": "string",        # вокодер спуф-системы, где размечен (DF-2021)
     "speaker_id": "string",
-    "sample_rate": "Int64",   # nullable integer
-    "codec": "string",
+    "sample_rate": "Int64",     # nullable integer
+    "codec": "string",          # формат контейнера файла (НЕ кодек сигнала)
     "duration": "float64",
 }
 
@@ -139,6 +158,31 @@ def validate_manifest(df: pd.DataFrame, *, dataset_id: str | None = None) -> Non
         problems.append(
             f"attack_type содержит сентинелы вместо NULL: {sorted(hits)} "
             "(подлинные/неизвестные атаки должны быть NULL, §6.1)"
+        )
+
+    # 7. utt_id безопасен как имя файла кэша (§6.5). Неявный контракт Стадии 1:
+    #    путь кэша — features/<hash>/<dataset_id>/<utt_id>.npy. Слэш или '..'
+    #    в utt_id разложил бы кэш не туда (в худшем случае — за пределы папки),
+    #    причём молча. Дешёвая проверка здесь ловит это до долгого прогона.
+    bad_utt = [
+        v for v in df["utt_id"].dropna()
+        if not _UTT_ID_RE.match(str(v)) or str(v) in _RESERVED_UTT_IDS
+    ]
+    if bad_utt:
+        problems.append(
+            f"небезопасные utt_id: {len(bad_utt)} шт., напр. {bad_utt[:3]} "
+            "(допустимы только [A-Za-z0-9._-], utt_id становится именем файла кэша)"
+        )
+
+    # 8. path — относительный путь внутри raw/<dataset_id>/, без выхода наверх.
+    bad_paths = [
+        v for v in df["path"].dropna()
+        if str(v).startswith("/") or "\\" in str(v) or ".." in str(v).split("/")
+    ]
+    if bad_paths:
+        problems.append(
+            f"недопустимые path: {len(bad_paths)} шт., напр. {bad_paths[:3]} "
+            "(ожидается относительный posix-путь внутри raw/<dataset_id>/)"
         )
 
     if problems:
