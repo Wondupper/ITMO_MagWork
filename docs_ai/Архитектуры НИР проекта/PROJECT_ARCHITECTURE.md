@@ -640,9 +640,9 @@ project/
 | `asvspoof2021_la` | `condition` | 3 | `none`, `alaw`, `ulaw`, `g722`, `gsm`, `opus`, `pstn` |
 | `asvspoof2021_la` | `transmission` | 4 | `loc_tx`, `sin_tx`, `ita_tx`, `mad_tx`, `-` (→ NULL) |
 | `asvspoof2021_df` | `condition` | 3 | `nocodec`; `{high,low}_{mp3,m4a,ogg}`; `mp3m4a`, `oggm4a` |
-| `asvspoof2021_df` | `vocoder` | 9 | размечен не у всех строк, `-` → NULL |
+| `asvspoof2021_df` | `vocoder` | 9 | `traditional_vocoder` 68 904, `neural_vocoder_autoregressive` 38 192, `neural_vocoder_nonautoregressive` 30 329, `waveform_concatenation` 2 817; заглушки `bonafide`/`unknown` → NULL (12 713) |
 
-Поля LA связаны не свободно: `none` встречается только с `-`, `pstn` — только с `mad_tx`; остальные пять кодеков — с каждым из трёх каналов (итого 17 комбинаций, не 5×3+2 декартовых). На группировку это не влияет, но объясняет, почему `groupby(["condition","transmission"])` даст 17 групп, а не 21.
+Поля LA связаны не свободно: `none` встречается только с `-`, `pstn` — только с `mad_tx`; остальные пять кодеков — с каждым из трёх каналов, итого 17 пар, а не 21. Канал — **под-ось внутри** условия, а не часть его определения (см. выше про C1–C7): основная разбивка идёт по `condition`, `transmission` её уточняет.
 
 Структура DF-условий читается как готовая ось эксперимента: базовая точка (`nocodec`) → одиночное сжатие трёх кодеков в двух уровнях качества → двойное перекодирование (`mp3m4a`, `oggm4a`). Расшифровка `high`/`low` как уровней битрейта — **чтение имён, не проверенный факт**; конкретные битрейты брать из evaluation plan ASVspoof 2021 и цитировать оттуда.
 
