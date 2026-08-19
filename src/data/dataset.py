@@ -59,8 +59,8 @@ class FeatureCacheDataset(Dataset):
 
     Параметры
     ---------
-    manifest : DataFrame канонической схемы (§6.1); может быть подвыборкой (§6.4)
-        или склейкой нескольких датасетов. Нужны колонки dataset_id, utt_id, label.
+    manifest : DataFrame канонической схемы (§6.1); может быть склейкой нескольких
+        датасетов. Нужны колонки dataset_id, utt_id, label.
     cache_dir : папка кэша признаков `data/features/<name>-<hash>/`
         (= extractor.cache_dir(paths)). Путь примера — cache_dir/<ds>/<utt>.npy,
         в точности как пишет Стадия 1 (features.output_path).

@@ -13,7 +13,8 @@
   2. PRE-FLIGHT (§6.6), строже, чем на Стадии 2: сверяются C кэша, C модели и
      ХЭШ КОНФИГА ПРИЗНАКА из чекпойнта. Последнее ловит случай «C совпал, а
      параметры признака другие», который одной сверкой C не отличить;
-  3. читает тестовые манифесты по селекторам (§3), опц. берёт подвыборку (§6.4);
+  3. читает тестовые манифесты по селекторам (§3) — состав селекторов и есть
+     объём оценки (§6.4);
   4. лениво прогоняет модель по кэшу, скор = сырой логит (§8, `utils.inference`);
   5. ВОЗОБНОВЛЯЕМ (§7): скоры пишутся шардами в `scores_parts/`, при рестарте уже
      посчитанные ключи (dataset_id, utt_id) пропускаются; в конце шарды
@@ -48,8 +49,7 @@ from torch.utils.data import DataLoader
 from .config import Config, Paths, Runtime, default_config
 from .data.dataset import FeatureCacheDataset, collate
 from .data.features import available_extractors, get_extractor
-from .data.selectors import load_selectors, stratify_for
-from .data.subsets import make_subset
+from .data.selectors import load_selectors
 from .models import available_models, get_model
 from .utils.inference import iter_batch_scores
 from .utils.io import atomic_write_parquet
@@ -138,7 +138,7 @@ def _preflight(cache_dir: Path, extractor, meta: dict) -> None:
 # Возобновляемость: шарды скоров (§7)
 # =============================================================================
 def _fingerprint(weights: Path, meta: dict, selectors: list[dict],
-                 n_test, seed: int, window: str) -> dict:
+                 window: str) -> dict:
     """Отпечаток условий прогона. Меняются условия — прежние шарды невалидны.
 
     «Пропустить готовое» безопасно только пока готовое посчитано ТЕМ ЖЕ. Без
@@ -153,8 +153,6 @@ def _fingerprint(weights: Path, meta: dict, selectors: list[dict],
         "t_fixed": meta.get("t_fixed"),
         "window": window,
         "selectors": sorted(f"{s['dataset_id']}:{s['split']}" for s in selectors),
-        "n_test": n_test,
-        "seed": seed,
     }
 
 
@@ -395,22 +393,13 @@ def run(config: Config, spec: dict, *, weights: str | None = None,
             "в конфиге нет data.test — добавьте список селекторов, напр.\n"
             "  test:\n    - {dataset_id: asvspoof2021_la, split: test}"
         )
-    sub = data.get("subset") or {}
-    n_test = sub.get("n_test")
-    sub_seed = int(sub.get("seed", rt.seed))
-    strat = stratify_for(sub.get("stratify"), data["test"])
-
-    test_df = load_selectors(paths, data["test"], ("attack_type", *strat))
-    test_df = make_subset(test_df, n_test, seed=sub_seed, stratify=strat)
+    test_df = load_selectors(paths, data["test"], ("attack_type",))
     n_requested = len(test_df)
     print(f"    тест: {n_requested} примеров из {len(data['test'])} селектор(ов)")
-    if n_test is not None:
-        print("    ВНИМАНИЕ: оценка на ПОДВЫБОРКЕ — для отладки, не для итоговых "
-              "чисел (§6.4).")
 
     # --- инференс с возобновлением (§7) ---
     parts_dir = exp_dir / _PARTS_DIR
-    fingerprint = _fingerprint(wpath, meta, data["test"], n_test, sub_seed, window)
+    fingerprint = _fingerprint(wpath, meta, data["test"], window)
     done, next_idx = _resume(parts_dir, fingerprint)
 
     todo = test_df
@@ -475,7 +464,6 @@ def run(config: Config, spec: dict, *, weights: str | None = None,
         "val_threshold": val_thr,
         "coverage": {"n_requested": int(n_requested), "n_scored": int(n_scored),
                      "ratio": round(ratio, 6)},
-        "subset": {"n_test": n_test, "seed": sub_seed} if n_test is not None else None,
         "per_dataset": {},
     }
     for ds_id, g in out.groupby("dataset_id", observed=True):

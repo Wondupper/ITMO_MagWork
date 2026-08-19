@@ -10,7 +10,7 @@
      объявляет модель (§6.6) — рассинхрон «признак ≠ модель» ловится ДО обучения,
      как валидатор схемы на Стадии 0 (§6.1);
   2. читает train/val-манифесты по селекторам (dataset_id, split), при нескольких —
-     склеивает (§3); опционально берёт детерминированную подвыборку (§6.4);
+     склеивает (§3); объём прогона задаётся составом селекторов (§6.4);
   3. лениво грузит признаки через Dataset/DataLoader — в памяти только батч (§3,§7);
   4. учит; в конце каждой эпохи считает val-EER (общая утилита, §8), пишет строку в
      metrics.jsonl и чекпойнт;
@@ -24,7 +24,7 @@ config.runtime и переопределяются секцией runtime в YAM
 единственной точкой в цикле (§6.6).
 
 Запуск (модуль пакета, из корня проекта — как Стадии 0/1, §4):
-    python -m src.train --config experiments/smoke_lfcc_statpool.yaml
+    python -m src.train --config experiments/lfcc_statpool.yaml
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ import os
 import random
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -44,8 +44,7 @@ from torch.utils.data import DataLoader
 from .config import Config, Paths, Runtime, default_config
 from .data.dataset import FeatureCacheDataset, collate
 from .data.features import available_extractors, get_extractor
-from .data.selectors import load_selectors, stratify_for
-from .data.subsets import make_subset
+from .data.selectors import load_selectors
 from .models import available_models, get_model
 from .utils.inference import predict_scores
 from .utils.metrics import compute_eer
@@ -71,15 +70,8 @@ def _resolve_device(name: str) -> torch.device:
 
 
 # =============================================================================
-# Данные: манифесты → (подвыборка) → Dataset/DataLoader
+# Данные: манифесты → Dataset/DataLoader
 # =============================================================================
-def _maybe_subset(
-    df: pd.DataFrame, n: int | None, seed: int, stratify: Iterable[str]
-) -> pd.DataFrame:
-    """Подвыборка (§6.4), если задан n; иначе полный df (стабильно отсортированный)."""
-    return make_subset(df, n, seed=seed, stratify=tuple(stratify))
-
-
 def _make_loader(
     manifest: pd.DataFrame, cache_dir: Path, channels: int, t_fixed: int,
     batch_size: int, num_workers: int, *, shuffle: bool, random_crop: bool = False,
@@ -100,7 +92,8 @@ def _pos_weight(labels: np.ndarray, mode: Any) -> torch.Tensor | None:
     В train 2019 LA спуфа (1) заметно больше, чем bonafide (0); без коррекции модель
     смещается к «всё спуф». `pos_weight = N_neg / N_pos` уравнивает вклад классов —
     одна величина, память/скорость не меняет. mode: "auto" | "none" | число.
-    Считается по ФАКТИЧЕСКИ используемым (в т.ч. подвыборочным) train-меткам.
+    Считается по ФАКТИЧЕСКИ используемым train-меткам (после отсева примеров,
+    которых нет в кэше признаков).
     """
     if mode in (None, "none", False):
         return None
@@ -249,22 +242,14 @@ def run(config: Config, spec: dict) -> Path:
     cache_dir = extractor.cache_dir(paths)
     _preflight_cache(cache_dir, extractor, channels)
 
-    # --- данные: селекторы → (подвыборка) → загрузчики ---
+    # --- данные: селекторы → загрузчики ---
+    # Объём прогона = состав селекторов (§6.4). Механизма подвыборок нет: чтобы
+    # прогнать быстро, берут маленький датасет (synthetic_mini), а не срез большого.
     data = spec["data"]
     t_fixed = int(data["t_fixed"])
-    sub = data.get("subset") or {}
-    sub_seed = int(sub.get("seed", rt.seed))
 
-    train_sel = data["train"]
-    val_sel = data["val"]
-    # Стратификация: из YAML или дефолт; при склейке >1 датасета добавляем dataset_id.
-    strat_train = stratify_for(sub.get("stratify"), train_sel)
-    strat_val = stratify_for(sub.get("stratify"), val_sel)
-
-    train_df = load_selectors(paths, train_sel, strat_train)
-    val_df = load_selectors(paths, val_sel, strat_val)
-    train_df = _maybe_subset(train_df, sub.get("n_train"), sub_seed, strat_train)
-    val_df = _maybe_subset(val_df, sub.get("n_val"), sub_seed, strat_val)
+    train_df = load_selectors(paths, data["train"])
+    val_df = load_selectors(paths, data["val"])
     print(f"    train: {len(train_df)} примеров, val: {len(val_df)} примеров "
           f"(признак {extractor.name}, C={channels}, t_fixed={t_fixed})")
 

@@ -57,8 +57,8 @@ from src.viz import style, results
 
 style.apply_style()
 
-metrics = results.load_metrics("smoke_lfcc_statpool")
-scores  = results.load_scores("smoke_lfcc_statpool")
+metrics = results.load_metrics("lfcc_statpool")
+scores  = results.load_scores("lfcc_statpool")
 
 fig = results.plot_det(scores, metrics)
 style.save_figure(fig, "det_curves")

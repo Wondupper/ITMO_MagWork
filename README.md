@@ -52,10 +52,10 @@ uv run python -m src.data.manifest asvspoof2019_la
 uv run python -m src.data.features asvspoof2019_la -f lfcc
 
 # 5. Стадия 2 — обучить
-uv run python -m src.train --config experiments/smoke_lfcc_statpool.yaml
+uv run python -m src.train --config experiments/lfcc_statpool.yaml
 
 # 6. Стадия 3 — оценить
-uv run python -m src.evaluate --config experiments/smoke_lfcc_statpool.yaml
+uv run python -m src.evaluate --config experiments/lfcc_statpool.yaml
 ```
 
 Все команды выполняются **из корня проекта** (папка, где лежит `src/`).
@@ -308,7 +308,7 @@ uv run python -m src.data.features for-2seconds -f lfcc --limit 200
 uv run python -m src.train --list
 
 # запустить прогон
-uv run python -m src.train --config experiments/smoke_lfcc_statpool.yaml
+uv run python -m src.train --config experiments/lfcc_statpool.yaml
 ```
 
 | Флаг | Назначение |
@@ -348,7 +348,7 @@ uv run python -m src.train --config experiments/smoke_lfcc_statpool.yaml
 
 ```bash
 # оценка по конфигу (веса — из eval.weights, по умолчанию best.pt)
-uv run python -m src.evaluate --config experiments/smoke_lfcc_statpool.yaml
+uv run python -m src.evaluate --config experiments/lfcc_statpool.yaml
 
 # явно выбрать веса
 uv run python -m src.evaluate --config experiments/<exp>.yaml --weights final
@@ -394,7 +394,7 @@ uv run python -m src.evaluate --config experiments/<exp>.yaml --allow-missing
   оценку. Секция `runtime` переопределяет дефолты `config.py`.
 
 Готовый пример со всеми секциями и комментариями —
-[`experiments/smoke_lfcc_statpool.yaml`](experiments/smoke_lfcc_statpool.yaml);
+[`experiments/smoke_lfcc_statpool.yaml`](experiments/lfcc_statpool.yaml);
 разбор полей — в [`experiments/README.md`](experiments/README.md).
 
 Профиль по умолчанию в примере — **smoke**: маленькая стратифицированная

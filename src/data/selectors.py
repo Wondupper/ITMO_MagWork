@@ -9,18 +9,24 @@
 `group-by` — единственные законные употребления `dataset_id` ниже манифеста
 (правило не-ветвления, §3). Пока такая функция одна, правило видно и проверяемо;
 две её копии в разных стадиях начали бы расходиться.
+
+Объём прогона задаётся ТОЛЬКО составом селекторов (какие датасеты и сплиты) — это
+единственная ручка (§6.4, v15). Механизма подвыборок нет: маленький прогон = маленький
+датасет (`synthetic_mini`), а не срез большого.
 """
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import Iterable
 
 import pandas as pd
 
 from ..config import Paths
-from .subsets import DEFAULT_STRATIFY
 
 #: Колонки, нужные любой стадии ниже манифеста (§7: не тянем лишнего).
 BASE_COLUMNS = ["dataset_id", "utt_id", "label", "split"]
+
+#: Ключ, по которому склеенный манифест стабильно сортируется (§3).
+_KEY = ["dataset_id", "utt_id"]
 
 
 def load_selectors(
@@ -33,12 +39,17 @@ def load_selectors(
     Параметры
     ---------
     selectors : список словарей {dataset_id, split} из experiments/<exp>.yaml.
-    extra_columns : колонки сверх BASE_COLUMNS (стратификация подвыборки,
-        `attack_type` для разбивки EER и т.п.). Дубли и None отбрасываются.
+    extra_columns : колонки сверх BASE_COLUMNS (напр. `attack_type` для разбивки
+        EER по атакам). Дубли и None отбрасываются.
 
     Единственные операции над dataset_id — фильтр по split и concat (§3):
     никакого `if dataset_id == …`. Пустой результат селектора — ошибка, а не
     молчаливый пропуск: это почти всегда опечатка в конфиге.
+
+    Результат стабильно отсортирован по (dataset_id, utt_id). Сортировка здесь
+    не косметика: порядок строк определяет порядок примеров в Dataset, а значит и
+    соответствие «скор ↔ ключ» на Стадии 3 (§7). Раньше её обеспечивал модуль
+    подвыборок; после его удаления (§6.4, v15) инвариант живёт тут.
     """
     need = list(dict.fromkeys([*BASE_COLUMNS, *(c for c in extra_columns if c)]))
     frames = []
@@ -55,17 +66,5 @@ def load_selectors(
         if df.empty:
             raise ValueError(f"[{ds}] нет строк со split='{sp}' — проверьте селектор.")
         frames.append(df)
-    return pd.concat(frames, ignore_index=True)
-
-
-def stratify_for(yaml_stratify: Sequence[str] | None, selectors: list[dict]) -> tuple[str, ...]:
-    """Колонки стратификации подвыборки: из YAML или дефолт (§6.4).
-
-    При склейке нескольких датасетов `dataset_id` добавляется обязательно —
-    иначе подвыборка может перекосить состав по датасетам (§6.4).
-    """
-    strat = tuple(yaml_stratify) if yaml_stratify else DEFAULT_STRATIFY
-    datasets = {s["dataset_id"] for s in selectors}
-    if len(datasets) > 1 and "dataset_id" not in strat:
-        strat = ("dataset_id", *strat)
-    return strat
+    out = pd.concat(frames, ignore_index=True)
+    return out.sort_values(_KEY, kind="stable").reset_index(drop=True)

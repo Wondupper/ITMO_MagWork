@@ -28,8 +28,8 @@ experiments/
 Стадии 2 и 3 читают **один и тот же файл**:
 
 ```bash
-uv run python -m src.train    --config experiments/smoke_lfcc_statpool.yaml
-uv run python -m src.evaluate --config experiments/smoke_lfcc_statpool.yaml
+uv run python -m src.train    --config experiments/lfcc_statpool.yaml
+uv run python -m src.evaluate --config experiments/lfcc_statpool.yaml
 ```
 
 Это не экономия файлов, а гарантия: признак и архитектура у обучения и оценки

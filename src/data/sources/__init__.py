@@ -11,5 +11,6 @@ from . import asvspoof2019_la  # noqa: F401,E402
 from . import asvspoof2021_la  # noqa: F401,E402
 from . import asvspoof2021_df  # noqa: F401,E402
 from . import for_2seconds     # noqa: F401,E402
+from . import mini  # noqa: F401
 
 __all__ = ["DatasetAdapter", "register", "get_adapter", "available"]

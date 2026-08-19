@@ -34,10 +34,6 @@ class Paths:
         return self.root / "data" / "manifests"
 
     @property
-    def subsets(self) -> Path:
-        return self.manifests / "subsets"
-
-    @property
     def features(self) -> Path:
         return self.root / "data" / "features"
 

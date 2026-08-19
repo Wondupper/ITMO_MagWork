@@ -30,8 +30,9 @@ def pick_examples(paths: Paths, dataset_id: str, *, n: int = 1,
                   attack_type: str | None = None, seed: int = 1337) -> pd.DataFrame:
     """Детерминированно выбрать n строк манифеста под заданные условия.
 
-    Тот же инвариант, что у подвыборок (§6.4): стабильная сортировка по ключу,
-    затем выборка с фиксированным seed — иначе «пример из работы» не воспроизвести.
+    Тот же инвариант, что в `selectors.load_selectors`: стабильная сортировка по
+    ключу, затем выборка с фиксированным seed — иначе «пример из работы» не
+    воспроизвести.
     """
     df = pd.read_parquet(paths.manifest_path(dataset_id))
     if label is not None:

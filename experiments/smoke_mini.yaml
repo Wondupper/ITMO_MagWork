@@ -1,0 +1,50 @@
+# SMOKE-конфиг: проверка, что цепочка Стадия 1 → 2 → 3 работает вообще.
+#   python -m src.data.mini                              # собрать датасет (один раз)
+#   python -m src.data.manifest mini                     # Стадия 0
+#   python -m src.data.features mini -f lfcc             # Стадия 1
+#   python -m src.train    --config experiments/smoke_mini.yaml
+#   python -m src.evaluate --config experiments/smoke_mini.yaml
+#
+# ⚠️ ЧИСЛА ОТСЮДА В РАБОТУ НЕ ИДУТ. `mini` собран из всех сплитов источников и
+# переразмечен заново — утечка между train и test заведомо есть, а на 4 примерах
+# EER не определён содержательно. Смысл прогона — «код отработал целиком», а не
+# «метод хорош». Ожидаемый EER ≈ случайный, интерпретации не подлежит.
+
+name: smoke_mini
+
+feature:
+  name: lfcc
+
+model:
+  name: statpool_mlp
+  params:
+    hidden: 32
+    dropout: 0.0
+
+data:
+  train:
+    - {dataset_id: mini, split: train}
+  val:
+    - {dataset_id: mini, split: dev}
+  test:
+    - {dataset_id: mini, split: test}
+  t_fixed: 100                     # ~1 c: записи в mini могут быть короткими
+
+train:
+  epochs: 2
+  lr: 0.001
+  pos_weight: auto
+  ckpt_every: 1
+  keep_last: 1
+
+eval:
+  weights: best
+  window: fixed
+  bootstrap: 0                     # на 2 примерах CI бессмысленен
+  min_coverage: 1.0                # весь mini обязан быть в кэше — иначе Стадия 1 не доделана
+
+runtime:
+  device: cpu
+  batch_size: 4
+  num_workers: 0
+  seed: 1337
