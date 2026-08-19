@@ -5,6 +5,10 @@
 1. **Реестр экстракторов** — зеркало реестра адаптеров (`sources/base.py`):
    `@register_extractor` кладёт класс в таблицу по имени, выбор идёт по имени
    без if-цепочек. Новый признак = новый класс + декоратор, ничего ниже не трогая.
+   **Параметры экстрактора задаются только его дефолтами** (v15): другая настройка
+   — это другой зарегистрированный экстрактор со своим именем, а не оверрайды из
+   YAML. Так конфиг Стадий 2–3 не может сослаться на кэш, который Стадия 1 не
+   умеет построить, — см. `get_extractor`.
 
 2. **Контракт формы (§6.6).** Каждый экстрактор отдаёт `float32`-массив `[T, C]`
    (T — кадры по времени, C — каналы). Длину НЕ нормализуем здесь: паддинг/пулинг —
@@ -39,10 +43,12 @@ librosa.load): при сбое видно НАСТОЯЩУЮ ошибку libsnd
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import textwrap
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -125,12 +131,54 @@ def register_extractor(cls: type[FeatureExtractor]) -> type[FeatureExtractor]:
     return cls
 
 
-def get_extractor(name: str, **overrides) -> FeatureExtractor:
-    """Собрать экстрактор по имени. `overrides` — точка входа для будущего
-    YAML-слоя оверрайдов (§7); без них берутся дефолтные гиперпараметры."""
+def get_extractor(name: str) -> FeatureExtractor:
+    """Собрать экстрактор по имени. Параметров не принимает — намеренно (v15).
+
+    **Одно имя = одна конфигурация = одна папка кэша.** Раньше здесь были
+    `**overrides` из YAML, и это создавало разрыв: конфиг Стадий 2–3 мог описать
+    конфигурацию признака, которую CLI Стадии 1 построить не умел (он overrides не
+    принимал), — то есть указать на папку кэша, которую нечем наполнить. Плюс
+    хэш считается от JSON словаря параметров, а frozen dataclass типы не приводит:
+    `overrides: {fmin: 0}` (int) давал другую папку, чем дефолтное `fmin=0.0`
+    (float), при семантически одинаковой настройке.
+
+    Вариация параметров теперь заводится как **именованный экстрактор**: подкласс с
+    другими дефолтами + `@register_extractor`, ~6 строк. Он сразу виден в `--list`,
+    одинаково доступен Стадии 1 и конфигу Стадий 2–3, и у изученной конфигурации
+    появляется имя, которое можно поставить в таблицу результатов. Например::
+
+        @register_extractor
+        @dataclass(frozen=True)
+        class LFCCNoDeltas(LFCC):
+            name: ClassVar[str] = "lfcc_nodelta"
+            with_deltas: bool = False
+
+    Хэш при этом остаётся, но пользователя не касается: он ловит единственный
+    сценарий — дефолты экстрактора поменяли в коде, а старый кэш остался лежать.
+    """
     if name not in _EXTRACTORS:
         raise KeyError(f"нет экстрактора '{name}'. Зарегистрированы: {available_extractors()}")
-    return _EXTRACTORS[name](**overrides)
+    return _EXTRACTORS[name]()
+
+
+def describe_extractor(name: str) -> list[str]:
+    """Строки описания экстрактора для `--list`: сводка, аннотация, параметры.
+
+    Параметры и их значения берутся из `dataclasses.fields`, аннотация — из первой
+    строки докстринга класса. Ни то, ни другое не дублируется руками, поэтому
+    справка не может разойтись с кодом.
+    """
+    ex = _EXTRACTORS[name]()
+    head = f"  {name:<14} C={ex.channels:<5} sr={ex.target_sr}  hash={ex.cache_hash()}"
+    doc = (inspect.getdoc(type(ex)) or "").splitlines()
+    lines = [head]
+    if doc:
+        lines.append(f"    {doc[0]}")
+    params = [f"{f.name}={getattr(ex, f.name)!r}"
+              for f in fields(ex) if f.name != "target_sr"]
+    if params:
+        lines.extend("    " + ln for ln in textwrap.wrap(" ".join(params), width=76))
+    return lines
 
 
 def available_extractors() -> list[str]:
@@ -542,10 +590,10 @@ def main(argv: list[str] | None = None) -> int:
     config = Config(paths=Paths(root=args.root)) if args.root else default_config()
 
     if args.list:
-        print("Экстракторы:")
+        print("Экстракторы (одно имя = одна конфигурация = одна папка кэша):")
         for n in available_extractors():
-            ex = get_extractor(n)
-            print(f"  {n:<10} C={ex.channels}  sr={ex.target_sr}  hash={ex.cache_hash()}")
+            for line in describe_extractor(n):
+                print(line)
         ds = _available_datasets(config)
         print("Датасеты с готовым манифестом:")
         if ds:

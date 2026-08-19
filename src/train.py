@@ -24,7 +24,7 @@ config.runtime и переопределяются секцией runtime в YAM
 единственной точкой в цикле (§6.6).
 
 Запуск (модуль пакета, из корня проекта — как Стадии 0/1, §4):
-    python -m src.train --config experiments/lfcc_statpool.yaml
+    python -m src.train --config experiments/smoke_lfcc_statpool.yaml
 """
 from __future__ import annotations
 
@@ -237,7 +237,14 @@ def run(config: Config, spec: dict) -> Path:
 
     # --- признак → C и папка кэша; PRE-FLIGHT сверка (§6.6) ---
     feat = spec["feature"]
-    extractor = get_extractor(feat["name"], **feat.get("overrides", {}))
+    if "overrides" in feat:
+        raise ValueError(
+            "секция feature.overrides удалена (v15): одно имя признака = одна "
+            "конфигурация = одна папка кэша. Вариация параметров заводится как "
+            "именованный экстрактор (см. get_extractor и --list), иначе конфиг мог бы "
+            "сослаться на кэш, который Стадия 1 не умеет построить."
+        )
+    extractor = get_extractor(feat["name"])
     channels = extractor.channels
     cache_dir = extractor.cache_dir(paths)
     _preflight_cache(cache_dir, extractor, channels)

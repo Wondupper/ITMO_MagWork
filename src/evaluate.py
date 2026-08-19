@@ -376,7 +376,14 @@ def run(config: Config, spec: dict, *, weights: str | None = None,
 
     # --- признак и pre-flight (§6.6) ---
     feat = spec["feature"]
-    extractor = get_extractor(feat["name"], **feat.get("overrides", {}))
+    if "overrides" in feat:
+        raise ValueError(
+            "секция feature.overrides удалена (v15): одно имя признака = одна "
+            "конфигурация = одна папка кэша. Вариация параметров заводится как "
+            "именованный экстрактор (см. get_extractor и --list), иначе конфиг мог бы "
+            "сослаться на кэш, который Стадия 1 не умеет построить."
+        )
+    extractor = get_extractor(feat["name"])
     channels = extractor.channels
     cache_dir = extractor.cache_dir(paths)
     _preflight(cache_dir, extractor, meta)
