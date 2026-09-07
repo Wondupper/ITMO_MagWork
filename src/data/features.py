@@ -559,8 +559,10 @@ def _progress(it: Iterator, total: int, dataset_id: str, name: str) -> Iterator:
 # экстрактор за прогон (одна конфигурация признаков = одна папка кэша).
 
 def _available_datasets(config: Config) -> list[str]:
-    """Датасеты с уже построенным манифестом (вход Стадии 1). subsets/ не попадают
-    (glob по одному уровню)."""
+    """Датасеты с уже построенным манифестом (вход Стадии 1).
+
+    Glob по одному уровню: вложенные папки в manifests/ не просматриваются.
+    """
     d = config.paths.manifests
     if not d.exists():
         return []

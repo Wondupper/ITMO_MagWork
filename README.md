@@ -190,7 +190,7 @@ project/
 │   ├── models/              # реестр архитектур         → src/models/README.md
 │   ├── utils/               # общие утилиты             → src/utils/README.md
 │   └── viz/                 # логика построения графиков → src/viz/README.md
-├── notebooks/               # тонкие ноутбуки 01–04      → notebooks/README.md
+├── notebooks/               # тонкие ноутбуки 01–05      → notebooks/README.md
 ├── experiments/             # конфиги YAML + результаты  → experiments/README.md
 ├── reports/figures/         # экспортированные PDF/SVG для текста работы
 ├── pyproject.toml           # прямые зависимости + экстры cpu/gpu
@@ -467,8 +467,8 @@ uv run python -m src.evaluate --config experiments/<exp>.yaml --allow-missing
 | `experiments/<exp>/ckpt_epoch*.pt` | чекпойнты (модель + оптимизатор + эпоха), последние `keep_last` | Стадия 2 |
 | `experiments/<exp>/best.pt` | веса с минимальным val-EER | Стадия 2 |
 | `experiments/<exp>/final.pt` | веса последней эпохи | Стадия 2 |
-| `experiments/<exp>/scores.parquet` | `dataset_id, utt_id, split, label, attack_type, score` | Стадия 3 |
-| `experiments/<exp>/eval_metrics.json` | EER + бутстрэп-CI, матрицы ошибок, разбивка по атакам, покрытие | Стадия 3 |
+| `experiments/<exp>/scores.parquet` | `dataset_id, utt_id, split, label, attack_type, condition, transmission, vocoder, score` | Стадия 3 |
+| `experiments/<exp>/eval_metrics.json` | EER + бутстрэп-CI, матрицы ошибок, разбивки по разрезам (`by_<колонка>`), покрытие | Стадия 3 |
 | `experiments/<exp>/scores_parts/` | временные шарды скоров + `_state.json`; удаляются после склейки | Стадия 3 |
 | `reports/figures/` | экспортированные фигуры для текста работы | ноутбуки |
 
@@ -506,6 +506,9 @@ uv run python -m src.evaluate --config experiments/<exp>.yaml --allow-missing
 ```bash
 uv run jupyter lab
 ```
+
+Ноутбуки 01–04 описывают один прогон, 05 сравнивает несколько между собой —
+именно он отвечает на вопрос «стало ли лучше и на сколько».
 
 Каждый ноутбук обязан проходить **Restart & Run All** сверху вниз без ошибок.
 Экспорт фигур — в `reports/figures/`: линейные графики (loss, DET, ROC) в

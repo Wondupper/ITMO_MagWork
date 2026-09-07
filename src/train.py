@@ -24,7 +24,7 @@ config.runtime и переопределяются секцией runtime в YAM
 единственной точкой в цикле (§6.6).
 
 Запуск (модуль пакета, из корня проекта — как Стадии 0/1, §4):
-    python -m src.train --config experiments/smoke_lfcc_statpool.yaml
+    python -m src.train --config experiments/lfcc_statpool.yaml
 """
 from __future__ import annotations
 
@@ -251,7 +251,7 @@ def run(config: Config, spec: dict) -> Path:
 
     # --- данные: селекторы → загрузчики ---
     # Объём прогона = состав селекторов (§6.4). Механизма подвыборок нет: чтобы
-    # прогнать быстро, берут маленький датасет (synthetic_mini), а не срез большого.
+    # прогнать быстро, берут маленький датасет (`mini`), а не срез большого.
     data = spec["data"]
     t_fixed = int(data["t_fixed"])
 

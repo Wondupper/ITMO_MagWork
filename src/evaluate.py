@@ -20,18 +20,19 @@
      посчитанные ключи (dataset_id, utt_id) пропускаются; в конце шарды
      склеиваются в `scores.parquet` и удаляются;
   6. считает метрики ПО КАЖДОМУ ДАТАСЕТУ ОТДЕЛЬНО: EER + бутстрэп-CI (§6.4),
-     матрицу ошибок, разбивку EER по атакам (§8).
+     матрицу ошибок, разбивку EER по каждой из колонок `GROUP_COLUMNS` — атака,
+     кодек, канал передачи, вокодер (§8).
 
 Почему нет общего EER по смеси датасетов: он смешал бы разные домены и разные
 классовые пропорции в одно число, которое ничего не измеряет. Кросс-датасетная
 постановка (§8) — это как раз сравнение отдельных чисел между собой.
 
 Артефакты — в experiments/<name>/ (§6.5):
-    scores.parquet     — dataset_id, utt_id, split, label, attack_type, score
-    eval_metrics.json  — агрегаты: EER, CI, пороги, матрицы ошибок, EER по атакам
+    scores.parquet     — dataset_id, utt_id, split, label, GROUP_COLUMNS, score
+    eval_metrics.json  — агрегаты: EER, CI, пороги, матрицы ошибок, блоки `by_*`
 
 Запуск (модуль пакета, из корня проекта — как Стадии 0/1/2, §4):
-    python -m src.evaluate --config experiments/smoke_lfcc_statpool.yaml
+    python -m src.evaluate --config experiments/lfcc_statpool.yaml
 """
 from __future__ import annotations
 
@@ -55,8 +56,14 @@ from .utils.inference import iter_batch_scores
 from .utils.io import atomic_write_parquet
 from .utils.metrics import Confusion, bootstrap_eer, compute_eer, confusion_at
 
+#: Колонки манифеста, по которым Стадия 3 умеет разбивать EER (§8). Список —
+#: единственное место, где это множество задано: он же управляет чтением манифеста,
+#: составом выгрузки и составом блоков `by_*` в метриках. Новый разрез = новая
+#: колонка манифеста в этом списке, а не новый код разбивки.
+GROUP_COLUMNS = ["attack_type", "condition", "transmission", "vocoder"]
+
 #: Колонки выгрузки скоров (§6.5). Порядок фиксирован — на него смотрит viz.
-SCORE_COLUMNS = ["dataset_id", "utt_id", "split", "label", "attack_type", "score"]
+SCORE_COLUMNS = ["dataset_id", "utt_id", "split", "label", *GROUP_COLUMNS, "score"]
 
 #: Конвенция скора — записывается в eval_metrics.json, чтобы число нельзя было
 #: прочитать наоборот. ВНИМАНИЕ: в официальных протоколах ASVspoof CM-скор
@@ -252,25 +259,49 @@ def _rates(c: Confusion) -> dict:
     }
 
 
-def _eer_by_attack(df: pd.DataFrame) -> dict:
-    """EER по каждой атаке отдельно: все подлинные датасета против спуфа этой атаки.
+def _eer_by(df: pd.DataFrame, column: str) -> dict:
+    """EER по каждому значению колонки отдельно (§8). Пусто, если разрез неприменим.
 
-    Уточнение контракта §6.1 (иначе правило читается буквально и ломается): «строки
-    с NULL в attack_type пропускать» относится к СПУФ-строкам с неизвестной атакой.
-    У подлинных записей attack_type всегда NULL по конвенции, и они обязаны
-    участвовать — без отрицательного класса EER не определён.
+    Смысл разбивки: агрегированный EER скрывает, где именно метод проседает —
+    на какой атаке, при каком кодеке, на каком вокодере. Одна функция на все
+    разрезы, потому что вопрос всегда один и тот же, меняется только колонка.
 
-    Смысл разбивки (§8): агрегированный EER скрывает, на каких атаках метод
-    проседает; именно эта таблица показывает слабые места, а не одно число.
+    ДВА РЕЖИМА, и выбор между ними существенен, а не косметика.
+
+    * `pooled` — у подлинных записей колонка пуста (так устроены `attack_type` и
+      `vocoder`: они описывают спуф-систему, у подлинной записи её нет). Тогда
+      отрицательный класс общий: ВСЕ подлинные датасета против спуфа этой группы.
+      Уточнение контракта §6.1: правило «строки с NULL пропускать» относится к
+      спуф-строкам с неизвестной атакой; подлинные обязаны участвовать, иначе без
+      отрицательного класса EER не определён.
+    * `matched` — колонка заполнена у обоих классов (так устроены `condition` и
+      `transmission`: кодек и канал применяются и к подлинным записям тоже). Тогда
+      оба класса ограничиваются одной группой. Смешивать здесь нельзя: если взять
+      спуф одного кодека против всех подлинных, «EER кодека» будет измерять в том
+      числе отличимость самого кодека от остальных, а не качество детекции внутри
+      него. Это ровно та подмена, из-за которой кодек и опасен как переменная (§8).
+
+    Режим определяется данными (есть ли непустые значения у подлинных) и пишется
+    в каждую запись, чтобы число нельзя было прочитать не в том смысле.
     """
+    if column not in df.columns:
+        return {}
     bona = df[df["label"] == 0]
-    spoof = df[(df["label"] == 1) & df["attack_type"].notna()]
+    spoof = df[(df["label"] == 1) & df[column].notna()]
+    if spoof.empty:
+        return {}
+    matched = bool(bona[column].notna().any())
+
     out: dict[str, dict] = {}
-    for attack, g in spoof.groupby("attack_type", observed=True):
-        scores = np.concatenate([bona["score"].to_numpy(), g["score"].to_numpy()])
-        labels = np.concatenate([np.zeros(len(bona), int), np.ones(len(g), int)])
-        e = compute_eer(scores, labels)
-        out[str(attack)] = {
+    for value, g in spoof.groupby(column, observed=True):
+        neg = bona[bona[column] == value] if matched else bona
+        e = compute_eer(
+            np.concatenate([neg["score"].to_numpy(), g["score"].to_numpy()]),
+            np.concatenate([np.zeros(len(neg), int), np.ones(len(g), int)]),
+        )
+        out[str(value)] = {
+            "mode": "matched" if matched else "pooled",
+            "n_bonafide": int(len(neg)),
             "n_spoof": int(len(g)),
             "eer": None if np.isnan(e.eer) else round(float(e.eer), 6),
         }
@@ -311,7 +342,12 @@ def _dataset_metrics(df: pd.DataFrame, *, n_boot: int, boot_seed: int, ci: float
             "threshold": float(val_threshold),
             **_rates(confusion_at(scores, labels, val_threshold)),
         }
-    out["by_attack"] = _eer_by_attack(df)
+    # Блоки `by_<колонка>`: пишутся только те разрезы, которые в этом датасете
+    # реально размечены. Отсутствие блока = колонка пуста, а не «не считали».
+    for col in GROUP_COLUMNS:
+        grouped = _eer_by(df, col)
+        if grouped:
+            out[f"by_{col}"] = grouped
     return out
 
 
@@ -400,7 +436,7 @@ def run(config: Config, spec: dict, *, weights: str | None = None,
             "в конфиге нет data.test — добавьте список селекторов, напр.\n"
             "  test:\n    - {dataset_id: asvspoof2021_la, split: test}"
         )
-    test_df = load_selectors(paths, data["test"], ("attack_type",))
+    test_df = load_selectors(paths, data["test"], GROUP_COLUMNS)
     n_requested = len(test_df)
     print(f"    тест: {n_requested} примеров из {len(data['test'])} селектор(ов)")
 

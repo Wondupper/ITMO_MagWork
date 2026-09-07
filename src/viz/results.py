@@ -101,7 +101,7 @@ def plot_det(scores: pd.DataFrame, metrics: dict | None = None,
         line, = ax.plot(norm.ppf(fpr[m]), norm.ppf(fnr[m]), label=str(ds))
         if metrics:
             eer = (metrics["per_dataset"].get(str(ds)) or {}).get("eer")
-            if eer:
+            if eer is not None and eer > 0:  # ppf(0) = −inf: точку не поставить
                 ax.plot(norm.ppf(eer), norm.ppf(eer), "o", ms=5,
                         color=line.get_color())
 
@@ -169,30 +169,111 @@ def plot_confusion(metrics: dict, dataset_id: str, at: str = "eer") -> plt.Figur
     return fig
 
 
-def plot_eer_by_attack(metrics: dict, dataset_id: str) -> plt.Figure:
-    """EER по каждой атаке отдельно — то, чего не видно в агрегированном числе (§8).
+#: Подписи разрезов — только для осей и заголовков; логика от них не зависит.
+GROUP_LABELS = {
+    "attack_type": "Атака",
+    "condition": "Кодек / условие",
+    "transmission": "Канал передачи",
+    "vocoder": "Вокодер",
+}
 
-    Пунктиром — общий EER датасета: столбцы выше него показывают атаки, на которых
-    метод проседает. Именно эта картинка отвечает на вопрос комиссии «а где метод
-    работает плохо».
+
+def available_groups(metrics: dict, dataset_id: str) -> list[str]:
+    """Какие разрезы реально посчитаны у датасета (блоки `by_*` в JSON).
+
+    Нужна ноутбуку, чтобы не гадать: у одного датасета размечены атаки, у другого
+    ещё и кодеки. Ноутбук перебирает то, что есть, вместо жёсткого списка.
     """
     m = metrics["per_dataset"][dataset_id]
-    by = {k: v for k, v in m.get("by_attack", {}).items() if v["eer"] is not None}
+    return [k[len("by_"):] for k in m if k.startswith("by_") and m[k]]
+
+
+def plot_eer_by_group(metrics: dict, dataset_id: str,
+                      column: str = "attack_type") -> plt.Figure:
+    """EER по каждому значению разреза — то, чего не видно в агрегате (§8).
+
+    Пунктиром — общий EER датасета: столбцы выше него показывают, где метод
+    проседает. Именно эта картинка отвечает на вопрос «а где он работает плохо».
+
+    Подпись столбца несёт число спуф-записей: EER группы из десятков записей шумный
+    и с группой из тысяч несопоставим (читать вместе с ноутбуком 02).
+
+    В заголовке — режим разбивки из JSON. `matched` значит, что подлинные взяты из
+    той же группы (кодек применён к обоим классам), `pooled` — что отрицательный
+    класс общий для всех групп (атака есть только у спуфа). Смысл чисел разный,
+    поэтому режим подписан на самой картинке, а не оставлен в тексте работы.
+    """
+    m = metrics["per_dataset"][dataset_id]
+    block = m.get(f"by_{column}", {})
+    by = {k: v for k, v in block.items() if v["eer"] is not None}
     if not by:
         raise ValueError(
-            f"у {dataset_id} нет разбивки по атакам (attack_type не размечен, §6.1)"
+            f"у {dataset_id} нет разбивки по '{column}' — колонка не размечена (§6.1). "
+            f"Посчитанные разрезы: {available_groups(metrics, dataset_id) or '—'}"
         )
     names = list(by)
     vals = [by[k]["eer"] * 100 for k in names]
+    ticks = [f"{k}\n(n={by[k]['n_spoof']})" for k in names]
+    mode = next(iter(by.values())).get("mode", "?")
 
-    fig, ax = plt.subplots(figsize=(max(6.0, 0.42 * len(names) + 1.5), 4.0))
+    fig, ax = plt.subplots(figsize=(max(6.0, 0.52 * len(names) + 1.5), 4.0))
     ax.bar(names, vals, width=0.7)
     if m["eer"] is not None:
         ax.axhline(m["eer"] * 100, ls="--", lw=1.0, color="0.35",
                    label=f"EER датасета = {m['eer'] * 100:.2f}%")
         ax.legend()
+    ax.set_xticks(range(len(names)), ticks)
     ax.set_ylabel("EER, %")
-    ax.set_xlabel("Атака")
-    ax.set_title(f"{dataset_id}: EER по атакам")
-    ax.tick_params(axis="x", rotation=90 if len(names) > 12 else 0)
+    ax.set_xlabel(GROUP_LABELS.get(column, column))
+    ax.set_title(f"{dataset_id}: EER по разрезу '{column}' ({mode})")
+    ax.tick_params(axis="x", rotation=90 if len(names) > 10 else 0)
+    return fig
+
+
+# =============================================================================
+# Распределение скоров
+# =============================================================================
+def plot_score_hist(scores: pd.DataFrame, metrics: dict, dataset_id: str,
+                    bins: int = 60) -> plt.Figure:
+    """Распределения скора по классам с обеими рабочими точками (§8).
+
+    Зачем эта картинка, если есть EER и матрицы ошибок. EER — свойство ПОРЯДКА
+    скоров, он ничего не говорит о том, где они лежат. Отсюда типичная ситуация,
+    которую иначе принимают за поломку: EER приличный, а матрица на пороге с
+    валидации почти вырожденная. Здесь сразу видно, почему — распределения
+    разделены, но сдвинуты относительно порога, выбранного на другом домене. Это
+    содержательный результат про переносимость, а не баг.
+
+    Читается ещё и форма: двугорбый спуф означает, что одно семейство атак ловится,
+    а другое нет (дальше — разбивка по атакам); упирающиеся в край скоры означают
+    насыщение, при котором порог определён плохо.
+
+    Рисуется из scores.parquet; пороги берутся из JSON, а не подбираются заново.
+    """
+    df = scores[scores["dataset_id"].astype(str) == str(dataset_id)]
+    if df.empty:
+        raise ValueError(f"в выгрузке нет строк с dataset_id='{dataset_id}'")
+    m = metrics["per_dataset"][str(dataset_id)]
+
+    fig, ax = plt.subplots()
+    rng = (float(df["score"].min()), float(df["score"].max()))
+    for label, name in ((0, "подлинные"), (1, "спуф")):
+        g = df[df["label"] == label]["score"]
+        if len(g):
+            ax.hist(g, bins=bins, range=rng, density=True, alpha=0.55,
+                    label=f"{name} (n={len(g)})")
+
+    thr_eer = m.get("eer_threshold")
+    if thr_eer is not None:
+        ax.axvline(thr_eer, ls="--", lw=1.2, color="0.25",
+                   label=f"порог EER = {thr_eer:.2f} (подобран на тесте)")
+    thr_val = (m.get("at_val_threshold") or {}).get("threshold")
+    if thr_val is not None:
+        ax.axvline(thr_val, ls=":", lw=1.4, color="crimson",
+                   label=f"порог с валидации = {thr_val:.2f}")
+
+    ax.set_xlabel("Скор модели (сырой логит; больше ⇒ спуф)")
+    ax.set_ylabel("Плотность")
+    ax.set_title(f"{dataset_id}: распределение скоров")
+    ax.legend()
     return fig

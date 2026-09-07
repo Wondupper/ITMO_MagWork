@@ -191,8 +191,8 @@ runtime:
 | `ckpt_epoch*.pt` | Стадия 2 | модель + оптимизатор + эпоха + метаданные; последние `keep_last` |
 | `best.pt` | Стадия 2 | веса с минимальным val-EER |
 | `final.pt` | Стадия 2 | веса последней эпохи |
-| `scores.parquet` | Стадия 3 | `dataset_id, utt_id, split, label, attack_type, score` |
-| `eval_metrics.json` | Стадия 3 | паспорт прогона + блок `per_dataset`: EER, порог, бутстрэп-CI, матрицы ошибок в двух точках, разбивка по атакам, покрытие |
+| `scores.parquet` | Стадия 3 | `dataset_id, utt_id, split, label, attack_type, condition, transmission, vocoder, score` |
+| `eval_metrics.json` | Стадия 3 | паспорт прогона + блок `per_dataset`: EER, порог, бутстрэп-CI, матрицы ошибок в двух точках, блоки `by_<колонка>` по каждому размеченному разрезу, покрытие |
 | `scores_parts/` | Стадия 3 | временные шарды + `_state.json`; удаляются после успешной склейки |
 
 **Стадия 3 по умолчанию грузит `best.pt`.** Оговорка: на малой или шумной

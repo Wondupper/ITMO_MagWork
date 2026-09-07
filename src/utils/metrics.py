@@ -146,3 +146,75 @@ def confusion_at(scores, labels, threshold: float) -> Confusion:
         fn=int(((labels == 1) & ~pred).sum()),
         tp=int(((labels == 1) & pred).sum()),
     )
+
+class EERDelta(NamedTuple):
+    """Разность EER двух прогонов на ОДНОМ тесте и её доверительный интервал."""
+    eer_a: float
+    eer_b: float
+    delta: float      # eer_b − eer_a: отрицательное значение = B лучше
+    lo: float
+    hi: float
+    n_boot: int
+
+
+def paired_bootstrap_eer_delta(scores_a, scores_b, labels, *, n_boot: int = 1000,
+                               seed: int = 1337, ci: float = 0.95) -> EERDelta:
+    """Парный бутстрэп-CI для разности EER двух моделей на одном тестовом наборе.
+
+    Зачем отдельная функция, если у каждого EER уже есть свой CI. Два интервала
+    по отдельности не отвечают на вопрос «стало ли лучше»: непересекающиеся
+    интервалы различие показывают, но ПЕРЕСЕКАЮЩИЕСЯ его не опровергают — это
+    известная ошибка чтения. Величина, про которую делается утверждение работы, —
+    сама разность, и интервал нужен именно у неё.
+
+    Почему парный. Обе модели оцениваются на одних и тех же записях, поэтому в
+    каждом повторе пересэмплируется ОДИН набор индексов и по нему считаются оба
+    EER. Общая для обеих моделей часть разброса (какие именно записи попали в
+    тест, насколько они трудные) при вычитании сокращается, и интервал у разности
+    получается уже, чем если считать два независимых бутстрэпа. Ресэмплинг, как и
+    в `bootstrap_eer`, стратифицирован по классу.
+
+    Требование к входу: `scores_a[i]`, `scores_b[i]` и `labels[i]` относятся к
+    ОДНОЙ И ТОЙ ЖЕ записи. Выравнивание по ключу (dataset_id, utt_id) — забота
+    вызывающего (`viz.compare.align_scores`); здесь только проверка длин.
+
+    Что интервал НЕ покрывает (та же оговорка, что у `bootstrap_eer`): случайность
+    обучения. Это разброс сравнения ДВУХ КОНКРЕТНЫХ обученных моделей на данном
+    тесте, а не разброс сравнения двух методов. Утверждение «метод B лучше метода
+    A вообще» потребовало бы нескольких прогонов с разными seed.
+    """
+    scores_a = np.asarray(scores_a, dtype=np.float64).ravel()
+    scores_b = np.asarray(scores_b, dtype=np.float64).ravel()
+    labels = np.asarray(labels).ravel().astype(int)
+    if not (len(scores_a) == len(scores_b) == len(labels)):
+        raise ValueError(
+            f"длины не совпадают: scores_a={len(scores_a)}, scores_b={len(scores_b)}, "
+            f"labels={len(labels)} — скоры должны быть выровнены по одному ключу."
+        )
+
+    eer_a = compute_eer(scores_a, labels).eer
+    eer_b = compute_eer(scores_b, labels).eer
+    point = eer_b - eer_a
+
+    neg = np.flatnonzero(labels == 0)
+    pos = np.flatnonzero(labels == 1)
+    if n_boot <= 0 or len(neg) == 0 or len(pos) == 0:
+        return EERDelta(eer_a, eer_b, point, float("nan"), float("nan"), 0)
+
+    rng = np.random.default_rng(seed)
+    draws = []
+    for _ in range(int(n_boot)):
+        idx = np.concatenate([
+            rng.choice(neg, size=len(neg), replace=True),
+            rng.choice(pos, size=len(pos), replace=True),
+        ])
+        lab = labels[idx]
+        d = compute_eer(scores_b[idx], lab).eer - compute_eer(scores_a[idx], lab).eer
+        if not np.isnan(d):
+            draws.append(d)
+    if not draws:
+        return EERDelta(eer_a, eer_b, point, float("nan"), float("nan"), 0)
+
+    alpha = (1.0 - ci) / 2.0
+    lo, hi = np.quantile(draws, [alpha, 1.0 - alpha])
+    return EERDelta(eer_a, eer_b, point, float(lo), float(hi), len(draws))
