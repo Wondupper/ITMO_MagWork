@@ -103,4 +103,4 @@ uv run python -m src.<модуль> ...
 - Инструкции по запуску, флаги стадий и разбор ошибок — в
   [корневом README](../README.md).
 - Обоснования архитектурных решений, открытые вопросы, changelog —
-  в `PROJECT_ARCHITECTURE.md`.
+  в [`PROJECT_ARCHITECTURE.md`](../docs_ai/Архитектуры%20НИР%20проекта/PROJECT_ARCHITECTURE.md).
