@@ -34,7 +34,8 @@ data:
   # кросс-датасетный вывод (§8).
   test:
     - {dataset_id: asvspoof2019_la, split: test}
-    - {dataset_id: for-2seconds, split: test}
+    - {dataset_id: asvspoof2021_la, split: test}
+    - {dataset_id: asvspoof2021_df, split: test}
   t_fixed: 400                     # общая длина в кадрах (~4 c при hop 10 мс); §6.6
                                    # Стадия 3 берёт t_fixed из чекпойнта, не отсюда
 

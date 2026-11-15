@@ -248,7 +248,7 @@ ITMO_MagWork/              # корень репозитория
 
 ```bash
 # один датасет
-uv run python -m src.data.manifest for-2seconds
+uv run python -m src.data.manifest asvspoof2019_la
 
 # несколько сразу
 uv run python -m src.data.manifest asvspoof2019_la asvspoof2021_la asvspoof2021_df
@@ -338,7 +338,7 @@ uv run python -m src.data.features --all -f logmel
 uv run python -m src.data.features --list
 
 # быстрый smoke на первых N примерах
-uv run python -m src.data.features for-2seconds -f lfcc --limit 200
+uv run python -m src.data.features asvspoof2019_la -f lfcc --limit 200
 ```
 
 | Флаг | Назначение |

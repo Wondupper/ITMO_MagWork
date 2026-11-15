@@ -38,7 +38,7 @@ librosa.load): при сбое видно НАСТОЯЩУЮ ошибку libsnd
     python -m src.data.features asvspoof2019_la -f lfcc     # один датасет
     python -m src.data.features --all -f logmel             # все с готовым манифестом
     python -m src.data.features --list                      # экстракторы + датасеты
-    python -m src.data.features for-2seconds -f lfcc --limit 200   # smoke-тест
+    python -m src.data.features asvspoof2019_la -f lfcc --limit 200   # smoke-тест
 """
 from __future__ import annotations
 

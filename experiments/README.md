@@ -107,7 +107,8 @@ data:
     - {dataset_id: asvspoof2019_la, split: dev}
   test:
     - {dataset_id: asvspoof2019_la, split: test}
-    - {dataset_id: for-2seconds,    split: test}
+    - {dataset_id: asvspoof2021_la, split: test}
+    - {dataset_id: asvspoof2021_df, split: test}
   t_fixed: 400
 ```
 
