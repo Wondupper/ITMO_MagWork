@@ -60,7 +60,7 @@
 ## Быстрый старт
 
 ```bash
-# 1. окружение (машина без NVIDIA GPU)
+# 1. окружение: машина без NVIDIA GPU — `--extra cpu`, с GPU — `--extra gpu`
 uv sync --extra cpu
 
 # 2. проверка окружения и данных
@@ -461,6 +461,7 @@ uv run python -m src.evaluate --config experiments/<exp>.yaml --allow-missing
 
 - **`src/config.py`** — статика: пути от корня проекта, seed, дефолты среды
   (`device`, `batch_size`, `num_workers`). Это единственное место, знающее про железо.
+  `device: auto` выбирает CUDA при её наличии, иначе CPU.
 - **`experiments/<exp>.yaml`** — один файл на прогон, описывает и обучение, и
   оценку. Секция `runtime` переопределяет дефолты `config.py`.
 

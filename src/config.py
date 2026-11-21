@@ -66,10 +66,27 @@ class Paths:
 class Runtime:
     """Единственное место, знающее про железо (§3, п.6). На Стадии 0 не используется."""
 
-    device: str = "cpu"      # "cpu" | "cuda"
+    device: str = "auto"     # "auto" | "cpu" | "cuda" — auto: cuda, если доступна, иначе cpu
     batch_size: int = 32
     num_workers: int = 0     # на CPU загрузка конкурирует с обучением за ядра (§7)
     seed: int = 1337
+
+
+def resolve_device(name: str):
+    """Имя устройства из конфига → `torch.device`. Единая точка для Стадий 2 и 3.
+
+    `auto` берёт CUDA, если она есть, иначе CPU: один и тот же YAML работает и на
+    ноутбуке, и на GPU-машине без правок. Явный `cuda` при недоступной CUDA не
+    роняет прогон, а падает назад на CPU с предупреждением.
+    """
+    import torch  # локально: Стадия 0 (индексация) не должна требовать torch
+
+    if name == "auto":
+        name = "cuda" if torch.cuda.is_available() else "cpu"
+    elif name.startswith("cuda") and not torch.cuda.is_available():
+        print("    ВНИМАНИЕ: запрошено device=cuda, но CUDA недоступна — беру cpu.")
+        name = "cpu"
+    return torch.device(name)
 
 
 @dataclass(frozen=True)

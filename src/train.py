@@ -41,7 +41,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from .config import Config, Paths, Runtime, default_config
+from .config import Config, Paths, Runtime, default_config, resolve_device
 from .data.dataset import FeatureCacheDataset, collate
 from .data.features import available_extractors, get_extractor
 from .data.selectors import load_selectors
@@ -61,25 +61,18 @@ def _set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def _resolve_device(name: str) -> torch.device:
-    """Уважать конфиг, но не падать, если cuda запрошена, а её нет (§3)."""
-    if name == "cuda" and not torch.cuda.is_available():
-        print("    ВНИМАНИЕ: запрошено device=cuda, но CUDA недоступна — беру cpu.")
-        return torch.device("cpu")
-    return torch.device(name)
-
-
 # =============================================================================
 # Данные: манифесты → Dataset/DataLoader
 # =============================================================================
 def _make_loader(
     manifest: pd.DataFrame, cache_dir: Path, channels: int, t_fixed: int,
     batch_size: int, num_workers: int, *, shuffle: bool, random_crop: bool = False,
+    pin_memory: bool = False,
 ) -> DataLoader:
     ds = FeatureCacheDataset(manifest, cache_dir, channels, t_fixed, random_crop=random_crop)
     return DataLoader(
         ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
-        collate_fn=collate, pin_memory=False, drop_last=False,
+        collate_fn=collate, pin_memory=pin_memory, drop_last=False,
     )
 
 
@@ -226,7 +219,7 @@ def run(config: Config, spec: dict) -> Path:
     к лучшим весам (best.pt). Идемпотентна к возобновлению (§7)."""
     paths = config.paths
     rt = config.runtime
-    device = _resolve_device(rt.device)
+    device = resolve_device(rt.device)
     _set_seed(rt.seed)
 
     # --- имя эксперимента и его папка (§6.5) ---
@@ -261,9 +254,11 @@ def run(config: Config, spec: dict) -> Path:
           f"(признак {extractor.name}, C={channels}, t_fixed={t_fixed})")
 
     train_loader = _make_loader(train_df, cache_dir, channels, t_fixed,
-                                rt.batch_size, rt.num_workers, shuffle=True, random_crop=True)
+                                rt.batch_size, rt.num_workers, shuffle=True, random_crop=True,
+                                pin_memory=device.type == "cuda")
     val_loader = _make_loader(val_df, cache_dir, channels, t_fixed,
-                              rt.batch_size, rt.num_workers, shuffle=False, random_crop=False)
+                              rt.batch_size, rt.num_workers, shuffle=False, random_crop=False,
+                              pin_memory=device.type == "cuda")
 
     # --- модель / лосс / оптимизатор ---
     mspec = spec["model"]

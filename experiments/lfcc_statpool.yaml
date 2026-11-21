@@ -59,7 +59,7 @@ eval:                              # Стадия 3 (§4); Стадия 2 эту
   shard_rows: 20000                # строк на промежуточный шард скоров (§7)
 
 runtime:                           # переопределяет дефолты config.py (§2, §3)
-  device: cpu
+  device: auto                     # auto | cpu | cuda; на GPU-машине поднимите num_workers
   batch_size: 16
   num_workers: 0
   seed: 1337

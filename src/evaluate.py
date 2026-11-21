@@ -47,7 +47,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from .config import Config, Paths, Runtime, default_config
+from .config import Config, Paths, Runtime, default_config, resolve_device
 from .data.dataset import FeatureCacheDataset, collate
 from .data.features import available_extractors, get_extractor
 from .data.selectors import load_selectors
@@ -385,8 +385,7 @@ def run(config: Config, spec: dict, *, weights: str | None = None,
     """Прогнать Стадию 3 по конфигу прогона `spec`. Вернуть путь к scores.parquet."""
     paths = config.paths
     rt = config.runtime
-    device = torch.device("cpu") if rt.device == "cuda" and not torch.cuda.is_available() \
-        else torch.device(rt.device)
+    device = resolve_device(rt.device)
 
     name = spec.get("name") or "unnamed_exp"
     exp_dir = paths.experiments / name
@@ -461,7 +460,7 @@ def run(config: Config, spec: dict, *, weights: str | None = None,
         if ds is not None:
             loader = DataLoader(ds, batch_size=rt.batch_size, shuffle=False,
                                 num_workers=rt.num_workers, collate_fn=collate,
-                                pin_memory=False, drop_last=False)
+                                pin_memory=device.type == "cuda", drop_last=False)
             _score_remaining(model, ds, loader, device, parts_dir, next_idx,
                              int(ecfg.get("shard_rows", 20000)))
 

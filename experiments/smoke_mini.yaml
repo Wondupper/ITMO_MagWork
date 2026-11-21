@@ -44,7 +44,7 @@ eval:
   min_coverage: 1.0                # весь mini обязан быть в кэше — иначе Стадия 1 не доделана
 
 runtime:
-  device: cpu
+  device: auto                     # auto | cpu | cuda; на GPU-машине поднимите num_workers
   batch_size: 4
   num_workers: 0
   seed: 1337
